@@ -27,16 +27,73 @@ export default function Dashboard() {
   const [stations, setStations] = useState<StationMapItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
-  const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number>(60);
-  const [isLiveStreamSync, setIsLiveStreamSync] = useState<boolean>(true);
+  const [isStreamConnected, setIsStreamConnected] = useState<boolean>(false);
   const [isSimulatingContinuous, setIsSimulatingContinuous] = useState<boolean>(false);
   const [showDummyStations, setShowDummyStations] = useState<boolean>(false);
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [simMessage, setSimMessage] = useState<string>('');
   const [showArduinoSnippet, setShowArduinoSnippet] = useState<boolean>(false);
 
-  // 1. Fetch stazioni attuali (filtrando o includendo i dati dummy su richiesta)
-  const fetchStations = useCallback(async () => {
+  // 1. Streaming Just-in-Time (SSE): riceve i campionamenti all'istante via push
+  // Nessun loop di polling ogni secondo (0 chiamate HTTP inutili e performance massime)
+  useEffect(() => {
+    setIsLoading(true);
+    const filterParam = showDummyStations ? 'all' : 'live_only';
+    const eventSource = new EventSource(`/api/telemetry/stream?filter=${filterParam}`);
+
+    eventSource.addEventListener('init', (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data);
+        setStations(payload.stations || []);
+        setIsStreamConnected(true);
+        setLastRefreshedAt(new Date(payload.timestamp || Date.now()));
+        setIsLoading(false);
+      } catch (err) {
+        console.error('Errore parsing init stream:', err);
+      }
+    });
+
+    eventSource.addEventListener('reading', (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data);
+        const incoming = payload.station;
+        if (!incoming) return;
+
+        setStations((prev) => {
+          const idx = prev.findIndex((s) => s.id === incoming.id);
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = {
+              ...copy[idx],
+              ...incoming,
+            };
+            return copy;
+          } else {
+            return [...prev, incoming];
+          }
+        });
+        setLastRefreshedAt(new Date());
+        setIsStreamConnected(true);
+      } catch (err) {
+        console.error('Errore parsing reading stream:', err);
+      }
+    });
+
+    eventSource.onopen = () => {
+      setIsStreamConnected(true);
+    };
+
+    eventSource.onerror = () => {
+      setIsStreamConnected(false);
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [showDummyStations]);
+
+  // Recupero manuale on-demand dello snapshot (opzionale)
+  const fetchStationsSnapshot = useCallback(async () => {
     try {
       const url = showDummyStations ? '/api/stations?filter=all' : '/api/stations?filter=live_only';
       const res = await fetch(url, { cache: 'no-store' });
@@ -44,41 +101,13 @@ export default function Dashboard() {
         const data = await res.json();
         setStations(data.stations || []);
         setLastRefreshedAt(new Date());
-        if (!isLiveStreamSync) {
-          setSecondsUntilRefresh(60);
-        }
       }
     } catch (err) {
-      console.error('Errore durante il caricamento delle stazioni:', err);
-    } finally {
-      setIsLoading(false);
+      console.error('Errore snapshot manuale:', err);
     }
-  }, [showDummyStations, isLiveStreamSync]);
+  }, [showDummyStations]);
 
-  // 2. Timer di Auto-refresh (1 secondo in modalità Live Stream, oppure 60s in modalità standard)
-  useEffect(() => {
-    fetchStations();
-
-    if (isLiveStreamSync) {
-      const liveTimer = setInterval(() => {
-        fetchStations();
-      }, 1000);
-      return () => clearInterval(liveTimer);
-    } else {
-      const standardTimer = setInterval(() => {
-        setSecondsUntilRefresh((prev) => {
-          if (prev <= 1) {
-            fetchStations();
-            return 60;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-      return () => clearInterval(standardTimer);
-    }
-  }, [fetchStations, isLiveStreamSync]);
-
-  // 3. Simulatore continuo (~1 secondo per campionamento Arduino nel DB)
+  // 2. Simulatore continuo (~1 secondo per campionamento Arduino nel DB se attivato manualmente)
   useEffect(() => {
     if (!isSimulatingContinuous) return;
 
@@ -93,14 +122,13 @@ export default function Dashboard() {
     return () => clearInterval(simInterval);
   }, [isSimulatingContinuous]);
 
-  // Trigger manuale di un ciclo di simulazione
+  // Trigger manuale di un singolo impulso dummy
   const triggerSingleSimulation = async () => {
     setSimMessage('Invio dati campionari Arduino in corso...');
     try {
       const res = await fetch('/api/simulator', { method: 'POST' });
       if (res.ok) {
         setSimMessage('Dati campionari acquisiti e memorizzati!');
-        await fetchStations();
       }
     } catch {
       setSimMessage('Errore durante la simulazione.');
@@ -154,50 +182,44 @@ export default function Dashboard() {
 
         {/* CONTROLLI E AZIONI RAPIDE */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <div style={{ fontSize: '12px', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span>Prossimo refresh:</span>
-            <strong style={{ 
-              backgroundColor: '#1e293b', 
-              padding: '2px 8px', 
-              borderRadius: '4px', 
-              color: '#f8fafc',
-              fontVariantNumeric: 'tabular-nums' 
-            }}>
-              {secondsUntilRefresh}s
-            </strong>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '7px',
+            backgroundColor: isStreamConnected ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+            border: isStreamConnected ? '1px solid #22c55e' : '1px solid #ef4444',
+            padding: '5px 12px',
+            borderRadius: '20px',
+            fontSize: '12px',
+            color: isStreamConnected ? '#4ade80' : '#fca5a5',
+            fontWeight: 600,
+          }}>
+            <span style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: isStreamConnected ? '#22c55e' : '#ef4444',
+              boxShadow: isStreamConnected ? '0 0 8px #22c55e' : 'none',
+              display: 'inline-block',
+            }} />
+            <span>{isStreamConnected ? 'Stream SSE Just-in-Time: ATTIVO' : 'Stream: Riconnessione...'}</span>
           </div>
 
           <button
-            onClick={() => fetchStations()}
+            onClick={() => fetchStationsSnapshot()}
             style={{
               padding: '6px 12px',
-              backgroundColor: '#2563eb',
-              color: '#ffffff',
-              border: 'none',
+              backgroundColor: '#1e293b',
+              color: '#cbd5e1',
+              border: '1px solid #475569',
               borderRadius: '5px',
               fontSize: '12px',
               cursor: 'pointer',
               fontWeight: 500
             }}
+            title="Richiede manualmente uno snapshot di tutte le stazioni"
           >
-            Aggiorna Ora
-          </button>
-
-          <button
-            onClick={() => setIsLiveStreamSync(!isLiveStreamSync)}
-            style={{
-              padding: '6px 12px',
-              backgroundColor: isLiveStreamSync ? '#15803d' : '#334155',
-              color: '#ffffff',
-              border: isLiveStreamSync ? '1px solid #4ade80' : '1px solid #64748b',
-              borderRadius: '5px',
-              fontSize: '12px',
-              cursor: 'pointer',
-              fontWeight: 600
-            }}
-            title="Sincronizza automaticamente i decibel ogni secondo per vedere voce e rumori in tempo reale"
-          >
-            {isLiveStreamSync ? '⚡ Sync Live (1s): ATTIVO' : '⏱️ Sync Lento (60s)'}
+            Aggiorna Snapshot
           </button>
 
           <button
@@ -392,7 +414,7 @@ export default function Dashboard() {
                         transition: 'all 0.15s ease-in-out'
                       }}
                     >
-                      <div style={{ maxWidth: '190px' }}>
+                      <div style={{ maxWidth: '185px' }}>
                         <div style={{ fontWeight: 600, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {st.name}
                         </div>
@@ -401,23 +423,34 @@ export default function Dashboard() {
                         </div>
                         <div style={{ fontSize: '10px', marginTop: '3px' }}>
                           {st.last_reading_time && (Date.now() - st.last_reading_time < 3500) ? (
-                            <span style={{ color: '#16a34a', fontWeight: 600 }}>● Trasmissione attiva in tempo reale</span>
+                            <span style={{ color: '#16a34a', fontWeight: 600 }}>● Stream in tempo reale</span>
                           ) : (
                             <span style={{ color: '#94a3b8' }}>○ In attesa (avvia <code>npm run mic</code>)</span>
                           )}
+                        </div>
+                        {/* Barra di intensità graduata fluida */}
+                        <div style={{ width: '100%', height: '4px', backgroundColor: '#e2e8f0', borderRadius: '2px', overflow: 'hidden', marginTop: '6px' }}>
+                          <div style={{
+                            height: '100%',
+                            width: `${Math.min(100, Math.max(6, ((st.current_intensity - 30) / (105 - 30)) * 100))}%`,
+                            backgroundColor: level.fillColor,
+                            transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.5s ease',
+                          }} />
                         </div>
                       </div>
 
                       <div style={{ textAlign: 'right' }}>
                         <div style={{
                           display: 'inline-block',
-                          padding: '2px 8px',
+                          padding: '3px 10px',
                           borderRadius: '12px',
                           backgroundColor: level.fillColor,
                           color: level.level === 'quiet' ? '#0f172a' : '#ffffff',
                           fontWeight: 'bold',
                           fontSize: '12px',
-                          border: `1px solid ${level.color}`
+                          border: `1px solid ${level.color}`,
+                          transition: 'background-color 0.5s ease, color 0.5s ease, border-color 0.5s ease',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.06)'
                         }}>
                           {st.current_intensity} dB
                         </div>

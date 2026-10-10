@@ -13,10 +13,25 @@ from torch.utils.data import Dataset
 from acoustic_models.features import LogMel
 
 
+def _read_audio(path: str) -> tuple[int, np.ndarray]:
+    """Read any supported audio file to mono float32.
+
+    Prefers libsndfile (handles PCM, float, ADPCM, ...); falls back to scipy for
+    the plain PCM/float WAVs it supports.
+    """
+    try:
+        import soundfile as sf
+
+        data, sr = sf.read(path, dtype="float32", always_2d=False)
+        return int(sr), np.asarray(data, dtype=np.float32)
+    except Exception:
+        sr, data = wavfile.read(path)
+        return int(sr), np.asarray(data, dtype=np.float32)
+
+
 def load_waveform(path: str, sample_rate: int = 16000) -> torch.Tensor:
     """Load a mono waveform, resampled to ``sample_rate`` and peak-normalized."""
-    sr, data = wavfile.read(path)
-    data = np.asarray(data, dtype=np.float32)
+    sr, data = _read_audio(path)
     if data.ndim > 1:
         data = data.mean(axis=1)
     peak = float(np.abs(data).max()) if data.size else 0.0

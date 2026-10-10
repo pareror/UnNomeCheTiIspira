@@ -130,8 +130,14 @@ def build_features(
     hop = int(hop_seconds * sample_rate)
 
     feats, labels, folds, clip_ids, class_names = [], [], [], [], []
+    skipped = 0
     for clip_id, clip in enumerate(clips):
-        wave = load_waveform(clip.path, sample_rate)
+        try:
+            wave = load_waveform(clip.path, sample_rate)
+        except Exception as exc:  # noqa: BLE001 - skip unreadable encodings
+            skipped += 1
+            print(f"  skipping {clip.filename}: {exc}")
+            continue
         if wave.shape[0] < win:
             wave = torch.nn.functional.pad(wave, (0, win - wave.shape[0]))
             starts = [0]
@@ -151,6 +157,8 @@ def build_features(
 
     if not feats:
         raise RuntimeError("no windows produced")
+    if skipped:
+        print(f"  skipped {skipped} unreadable clips")
     return {
         "X": torch.stack(feats),
         "y": np.asarray(labels),

@@ -56,6 +56,7 @@ Supported datasets (both **CC BY-NC 3.0**, non-commercial):
 
 | key | dataset | classes | role |
 |-----|---------|---------|------|
+| `urban_safety` | Urban Safety | 9 | curated safety taxonomy (scream, gunshot, siren, traffic, speech, ...) |
 | `us8k` | UrbanSound8K | 10 | project taxonomy (engine, siren, jackhammer, ...) |
 | `esc50` | ESC-50 | 50 | general benchmark |
 

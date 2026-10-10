@@ -7,7 +7,7 @@ features:
   target_frames: 49
 
 model:
-  n_urban: 8
+  n_urban: 9
   dropout: 0.2
   embedding_dim: 64
 
@@ -28,14 +28,15 @@ decision:
   smooth_window: 3
 
 classes:
-  urban:               # SONYC-UST coarse taxonomy
-    - engine
-    - machinery-impact
-    - non-machinery-impact
-    - powered-saw
-    - alert-signal
-    - music
-    - human-voice
-    - dog
+  urban:               # 9-class urban safety taxonomy
+    - scream
+    - gunshot
+    - siren
+    - traffic
+    - speech
+    - car_horn
+    - construction
+    - impact_crash
+    - ambient_quiet
   safety:
     - scream

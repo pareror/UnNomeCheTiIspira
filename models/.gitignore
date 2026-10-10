@@ -6,3 +6,4 @@ artifacts/
 data/
 *.zip
 *.tar.gz
+*.log

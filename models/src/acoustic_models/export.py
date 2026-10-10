@@ -15,6 +15,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+
+# Ensure UTF-8 output on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 import torch
 
@@ -53,8 +58,14 @@ def _onnx_export(model, dummy, path: str, input_names: list[str], output_names: 
         )
 
 
-def export_classifier_onnx(path: str, n_urban: int = 8) -> None:
-    model = DSCNN(n_mels=N_MELS, n_urban=n_urban).eval()
+def export_classifier_onnx(path: str, n_urban: int = 8, weights_path: str | None = None) -> None:
+    model = DSCNN(n_mels=N_MELS, n_urban=n_urban)
+    if weights_path is not None and os.path.exists(weights_path):
+        ckpt = torch.load(weights_path, map_location="cpu", weights_only=False)
+        state_dict = ckpt.get("model_state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
+        model.load_state_dict(state_dict)
+        print(f"loaded weights from {weights_path}")
+    model.eval()
     dummy = torch.randn(1, 1, N_MELS, FRAMES)
     _onnx_export(
         model,

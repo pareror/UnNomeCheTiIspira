@@ -1,0 +1,49 @@
+{
+  "meta": "urban_safety, task=binary, 1s windows, log-mel 40x49, seed=0, max_epochs=30, patience=10, val_frac=0.1",
+  "classifier": {
+    "params": 13347,
+    "window_accuracy": 0.7165605095541401,
+    "window_macro_f1": 0.7133949357482028,
+    "clip_accuracy": 0.7,
+    "clip_macro_f1": 0.6983029541169076,
+    "confusion_matrix": [
+      [
+        25,
+        8
+      ],
+      [
+        16,
+        31
+      ]
+    ],
+    "class_names": [
+      "ordinary",
+      "non-ordinary"
+    ],
+    "test_fold": 10,
+    "n_test_clips": 80,
+    "epochs_run": 13,
+    "best_epoch": 3,
+    "best_val_loss": 0.39066076278686523,
+    "roc_auc": 0.8378344481605351,
+    "model_path": "artifacts\\ds_cnn_urban_safety_binary.pt"
+  },
+  "anomaly": {
+    "detectors": {
+      "gaussian_mahalanobis": 0.7827759197324413,
+      "knn_feature_bank": 0.7935618729096989,
+      "autoencoder_recon": 0.7412207357859532
+    },
+    "best_detector": "knn_feature_bank",
+    "best_auroc": 0.7935618729096989,
+    "ae_params": 4801,
+    "ae_epochs_run": 30,
+    "ae_best_epoch": 30,
+    "n_normal_test": 130,
+    "n_anomalous_test": 184,
+    "normal_group": "normal",
+    "anomalous_group": "anomalous",
+    "test_fold": 10,
+    "model_path": "artifacts\\anomaly_ae_urban_safety.pt"
+  }
+}

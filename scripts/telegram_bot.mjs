@@ -517,9 +517,33 @@ async function handleIncomingMessage(msg) {
   );
 }
 
-// -------------------------------------------------------------
-// CICLO PRINCIPALE DI LONG-POLLING
-// -------------------------------------------------------------
+// Registra i comandi ufficiali con la Bot API per abilitare il menu popup di autocompletamento quando l'utente digita "/"
+async function registerBotCommands() {
+  const commands = [
+    { command: 'start', description: 'Avvia il bot e inserisci la chiave univoca' },
+    { command: 'raggio', description: 'Imposta il raggio di allerta in metri (es: /raggio 150)' },
+    { command: 'stazioni', description: 'Elenco celle acustiche monitorate nel tuo raggio' },
+    { command: 'stato', description: 'Riepilogo sede, coordinate, raggio e timer anti-spam' },
+    { command: 'test_allerta', description: 'Invia una notifica di prova simulata' },
+    { command: 'aiuto', description: 'Guida e istruzioni per configurare la tua attività' },
+  ];
+
+  try {
+    const res = await fetch(`${TELEGRAM_API}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commands }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      console.log('✅ Menu popup dei comandi Telegram registrato con successo (setMyCommands OK)');
+    } else {
+      console.warn('⚠️ Registrazione comandi Telegram:', data.description);
+    }
+  } catch (err) {
+    console.error('❌ Errore chiamata setMyCommands:', err.message);
+  }
+}
 
 async function startBotPolling() {
   console.log('========================================================');
@@ -541,6 +565,9 @@ async function startBotPolling() {
     console.error('❌ Errore connessione a Telegram API:', err.message);
     process.exit(1);
   }
+
+  // Registrazione del menu comandi popup per l'autocompletamento digitando "/"
+  await registerBotCommands();
 
   let offset = 0;
 

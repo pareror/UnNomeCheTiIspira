@@ -712,3 +712,36 @@ export async function handleTelegramUpdate(update: any): Promise<void> {
 
   return handleSubscriberUpdate(update);
 }
+
+/**
+ * Registra i comandi del Bot con la Telegram Bot API per mostrare il menu
+ * popup di autocompletamento quando l'utente digita "/" in chat.
+ */
+export async function setMyTelegramCommands(): Promise<{ ok: boolean; error?: string }> {
+  const token = getBotToken();
+  if (!token) return { ok: false, error: 'Token non configurato' };
+
+  const commands = [
+    { command: 'start', description: 'Avvia il bot e inserisci la chiave univoca' },
+    { command: 'raggio', description: 'Imposta il raggio di allerta in metri (es: /raggio 150)' },
+    { command: 'stazioni', description: 'Elenco celle acustiche monitorate nel tuo raggio' },
+    { command: 'stato', description: 'Riepilogo sede, coordinate, raggio e timer anti-spam' },
+    { command: 'test_allerta', description: 'Invia una notifica di prova simulata' },
+    { command: 'aiuto', description: 'Guida e istruzioni per configurare la tua attività' },
+  ];
+
+  try {
+    const res = await fetch(`${TELEGRAM_API_BASE}/bot${token}/setMyCommands`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ commands }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      return { ok: true };
+    }
+    return { ok: false, error: data.description || res.statusText };
+  } catch (err: any) {
+    return { ok: false, error: err.message };
+  }
+}

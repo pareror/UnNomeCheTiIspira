@@ -98,6 +98,9 @@ function initializeDatabase(db: Database.Database) {
       alert_radius_meters INTEGER NOT NULL DEFAULT 150,
       is_active INTEGER NOT NULL DEFAULT 1,
       last_alert_at INTEGER NOT NULL DEFAULT 0,
+      opening_hours TEXT,
+      google_place_id TEXT,
+      osm_id TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
@@ -130,6 +133,23 @@ function initializeDatabase(db: Database.Database) {
   }
   try {
     db.exec(`ALTER TABLE companies ADD COLUMN osm_id TEXT;`);
+  } catch {
+    // La colonna esiste già
+  }
+
+  // Migrazioni retrocompatibili per gli orari/apertura degli iscritti al bot
+  try {
+    db.exec(`ALTER TABLE telegram_subscribers ADD COLUMN opening_hours TEXT;`);
+  } catch {
+    // La colonna esiste già
+  }
+  try {
+    db.exec(`ALTER TABLE telegram_subscribers ADD COLUMN google_place_id TEXT;`);
+  } catch {
+    // La colonna esiste già
+  }
+  try {
+    db.exec(`ALTER TABLE telegram_subscribers ADD COLUMN osm_id TEXT;`);
   } catch {
     // La colonna esiste già
   }
@@ -577,6 +597,9 @@ export interface TelegramSubscriber {
   alert_radius_meters: number;
   is_active: number;
   last_alert_at: number;
+  opening_hours: string | null;
+  google_place_id: string | null;
+  osm_id: string | null;
   created_at: string;
 }
 
@@ -607,6 +630,9 @@ export function upsertTelegramSubscriber(data: {
   alert_radius_meters?: number;
   is_active?: number;
   last_alert_at?: number;
+  opening_hours?: string | null;
+  google_place_id?: string | null;
+  osm_id?: string | null;
 }): void {
   const db = getDb();
   const existing = db.prepare('SELECT * FROM telegram_subscribers WHERE chat_id = ?').get(data.chat_id) as TelegramSubscriber | undefined;
@@ -623,7 +649,10 @@ export function upsertTelegramSubscriber(data: {
         longitude = COALESCE(?, longitude),
         alert_radius_meters = COALESCE(?, alert_radius_meters),
         is_active = COALESCE(?, is_active),
-        last_alert_at = COALESCE(?, last_alert_at)
+        last_alert_at = COALESCE(?, last_alert_at),
+        opening_hours = COALESCE(?, opening_hours),
+        google_place_id = COALESCE(?, google_place_id),
+        osm_id = COALESCE(?, osm_id)
       WHERE chat_id = ?
     `).run(
       data.username ?? null,
@@ -636,14 +665,18 @@ export function upsertTelegramSubscriber(data: {
       data.alert_radius_meters ?? null,
       data.is_active ?? null,
       data.last_alert_at ?? null,
+      data.opening_hours ?? null,
+      data.google_place_id ?? null,
+      data.osm_id ?? null,
       data.chat_id
     );
   } else {
     db.prepare(`
       INSERT INTO telegram_subscribers (
         chat_id, username, first_name, auth_key, is_authenticated,
-        address, latitude, longitude, alert_radius_meters, is_active, last_alert_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        address, latitude, longitude, alert_radius_meters, is_active, last_alert_at,
+        opening_hours, google_place_id, osm_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.chat_id,
       data.username || null,
@@ -655,9 +688,36 @@ export function upsertTelegramSubscriber(data: {
       data.longitude || null,
       data.alert_radius_meters ?? 150,
       data.is_active ?? 1,
-      data.last_alert_at ?? 0
+      data.last_alert_at ?? 0,
+      data.opening_hours || null,
+      data.google_place_id || null,
+      data.osm_id || null
     );
   }
+}
+
+// Imposta lo stato di attività di un iscritto (per il comando /stop)
+export function setSubscriberActive(chat_id: string, is_active: number): number {
+  const db = getDb();
+  const result = db.prepare('UPDATE telegram_subscribers SET is_active = ? WHERE chat_id = ?').run(is_active, chat_id);
+  return result.changes;
+}
+
+// Conteggi per l'endpoint di osservabilità
+export function getSubscriberStats(): { total: number; active: number; authenticated: number } {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
+      SUM(CASE WHEN is_authenticated = 1 THEN 1 ELSE 0 END) as authenticated
+    FROM telegram_subscribers
+  `).get() as { total: number; active: number | null; authenticated: number | null };
+  return {
+    total: row.total ?? 0,
+    active: row.active ?? 0,
+    authenticated: row.authenticated ?? 0,
+  };
 }
 
 // Recupera un iscritto dal suo chat_id

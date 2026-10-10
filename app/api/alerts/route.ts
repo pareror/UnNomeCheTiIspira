@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRecentAlerts, getActiveBreaches } from '@/lib/db';
+import { getRecentAlerts, getActiveBreaches, getSubscriberStats } from '@/lib/db';
+import { getOpenStatusProvider } from '@/lib/open-status';
 import { verifyAdminApiKey, applySecurityHeaders } from '@/lib/security';
 
 export const dynamic = 'force-dynamic';
@@ -24,6 +25,8 @@ export async function GET(request: NextRequest) {
     return applySecurityHeaders(
       NextResponse.json({
         count: alerts.length,
+        open_status_provider: getOpenStatusProvider(),
+        subscribers: getSubscriberStats(),
         active_breaches: activeBreaches,
         alerts,
       })

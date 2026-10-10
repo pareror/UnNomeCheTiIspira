@@ -33,6 +33,7 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     endpoint: 'POST /api/telegram/webhook',
-    usage: 'Registra questo URL con setWebhook. Comandi: /start <slug>, /status, /stop',
+    usage:
+      'Registra questo URL con setWebhook. Iscritti: /start <chiave>, indirizzo, /raggio, /stazioni, /stato, /test_allerta, /stop. Esercizi: /start <slug>, /status, /stop.',
   });
 }

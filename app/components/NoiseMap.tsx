@@ -1,0 +1,643 @@
+'use client';
+
+import React, { useEffect, useRef, useState } from 'react';
+import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import { 
+  TURIN_CENTER_LNG_LAT, 
+  TURIN_DEFAULT_ZOOM, 
+  TURIN_BOUNDS_MAPLIBRE, 
+  NOISE_RADIUS_METERS, 
+  OPENFREEMAP_STYLES,
+  OpenFreeMapStyleKey,
+  getNoiseLevel 
+} from '@/lib/constants';
+
+export interface StationMapItem {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  current_intensity: number;
+  last_reading_time: number | null;
+  radius_meters: number;
+}
+
+interface NoiseMapProps {
+  stations: StationMapItem[];
+  selectedStationId?: string | null;
+}
+
+export type HeatmapMode = 'combined' | 'gradient' | 'circles';
+
+// Genera un poligono circolare geodetico con raggio esatto di 15m
+function createGeoJSONCircle(
+  centerLng: number, 
+  centerLat: number, 
+  radiusInMeters: number = NOISE_RADIUS_METERS, 
+  numPoints: number = 36
+): number[][] {
+  const coords: number[][] = [];
+  const latRad = (centerLat * Math.PI) / 180;
+  
+  const metersToDegreesLat = 1 / 111132;
+  const metersToDegreesLng = 1 / (111412.84 * Math.cos(latRad));
+
+  const dLat = radiusInMeters * metersToDegreesLat;
+  const dLng = radiusInMeters * metersToDegreesLng;
+
+  for (let i = 0; i <= numPoints; i++) {
+    const theta = (i / numPoints) * (2 * Math.PI);
+    const lng = centerLng + dLng * Math.cos(theta);
+    const lat = centerLat + dLat * Math.sin(theta);
+    coords.push([lng, lat]);
+  }
+  return coords;
+}
+
+export default function NoiseMap({ stations, selectedStationId }: NoiseMapProps) {
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const activePopupRef = useRef<maplibregl.Popup | null>(null);
+  const [currentStyle, setCurrentStyle] = useState<OpenFreeMapStyleKey>('positron');
+  const [visualMode, setVisualMode] = useState<HeatmapMode>('combined');
+  const [glowSize, setGlowSize] = useState<number>(45); // Raggio visivo dell'aura sfumata in pixel
+  const [isMapLoaded, setIsMapLoaded] = useState<boolean>(false);
+
+  // 1. Inizializzazione della mappa MapLibre GL con OpenFreeMap
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+
+    if (typeof window !== 'undefined' && maplibregl.setWorkerUrl) {
+      maplibregl.setWorkerUrl('/maplibre-gl-worker.mjs');
+    }
+
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: OPENFREEMAP_STYLES[currentStyle],
+      center: TURIN_CENTER_LNG_LAT,
+      zoom: TURIN_DEFAULT_ZOOM,
+      minZoom: 11.5,
+      maxZoom: 19,
+      maxBounds: TURIN_BOUNDS_MAPLIBRE, // Ritaglio rigoroso su Torino
+      attributionControl: false,
+    });
+
+    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');
+    map.addControl(
+      new maplibregl.AttributionControl({
+        compact: true,
+        customAttribution: '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> &copy; OpenStreetMap',
+      }),
+      'bottom-right'
+    );
+
+    map.on('load', () => {
+      // -------------------------------------------------------------
+      // SORGENTE 1: Punti acustici (per Heatmap WebGL e Aureole Sfumate)
+      // -------------------------------------------------------------
+      map.addSource('noise-stations-points', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      // LAYER 1: VERA SFUMATURA TERMICA WEBGL (HEATMAP)
+      // Fonde insieme le emissioni creando un gradiente continuo per le zone calde e fredde
+      map.addLayer({
+        id: 'noise-webgl-heatmap',
+        type: 'heatmap',
+        source: 'noise-stations-points',
+        maxzoom: 19,
+        paint: {
+          'heatmap-weight': [
+            'interpolate',
+            ['linear'],
+            ['get', 'current_intensity'],
+            20, 0.05,
+            40, 0.2,
+            65, 0.45,
+            80, 0.85,  // Accelera la presenza di rosso a partire dagli 80 dB
+            95, 1.3,   // Esplosione visiva per livelli critici
+            110, 1.8,
+          ],
+          'heatmap-intensity': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            11, 1.4,
+            14, 2.4,
+            17, 3.8,
+          ],
+          // SCALA CROMATICA ACCENTUATA SUI ROSSI E VIOLA
+          'heatmap-color': [
+            'interpolate',
+            ['linear'],
+            ['heatmap-density'],
+            0, 'rgba(0,0,0,0)',
+            0.10, 'rgba(255, 255, 255, 0.60)', // Bianco (< 40 dB)
+            0.28, 'rgba(34, 197, 94, 0.80)',   // Verde (40-65 dB)
+            0.50, 'rgba(234, 179, 8, 0.88)',   // Giallo (66-80 dB)
+            0.70, 'rgba(255, 23, 68, 0.96)',   // Rosso Fuoco Vivo (> 80 dB)
+            0.92, 'rgba(213, 0, 249, 1.0)',    // Viola Elettrico (> 95 dB)
+          ],
+          'heatmap-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            11, 28,
+            13, 55,
+            15, 95,
+            17, 150,
+          ],
+          'heatmap-opacity': 0.88,
+        },
+      });
+
+      // LAYER 2: ALONE RADIALE AMBIENTALE (Con raggio maggiorato per zone rosse)
+      map.addLayer({
+        id: 'noise-ambient-halo',
+        type: 'circle',
+        source: 'noise-stations-points',
+        paint: {
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['get', 'current_intensity'],
+            30, 25,
+            60, 35,
+            80, 55, // Espansione dell'alone per livelli elevati
+            100, 85,
+          ],
+          'circle-color': ['get', 'color'],
+          'circle-opacity': [
+            'case',
+            ['>=', ['get', 'current_intensity'], 80],
+            0.55, // Più evidente per zone rosse e viola
+            0.30,
+          ],
+          'circle-blur': 0.88,
+        },
+      });
+
+      // LAYER 2B: BAGLIORE TERMICO AD ALTA INTENSITÀ PER ZONE CALDE (ROSSO / VIOLA)
+      map.addLayer({
+        id: 'noise-hotzone-radiance',
+        type: 'circle',
+        source: 'noise-stations-points',
+        filter: ['>=', ['get', 'current_intensity'], 80],
+        paint: {
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            11, 30,
+            14, 60,
+            17, 110,
+          ],
+          'circle-color': [
+            'case',
+            ['>=', ['get', 'current_intensity'], 95],
+            'rgba(213, 0, 249, 0.65)', // Viola fluorescente
+            'rgba(255, 23, 68, 0.60)',  // Rosso vivo
+          ],
+          'circle-blur': 0.75,
+        },
+      });
+
+      // -------------------------------------------------------------
+      // SORGENTE 2: Poligoni circolare calibrati a 15 Metri Reali
+      // -------------------------------------------------------------
+      map.addSource('noise-stations-circles-15m', {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+
+      // LAYER 3: Riempimento 15m (con opacità maggiore per zone rosse)
+      map.addLayer({
+        id: 'noise-15m-fill',
+        type: 'fill',
+        source: 'noise-stations-circles-15m',
+        paint: {
+          'fill-color': ['get', 'fillColor'],
+          'fill-opacity': [
+            'case',
+            ['>=', ['get', 'current_intensity'], 80],
+            0.75, // Zona rossa/viola marcata e solida
+            0.45,
+          ],
+        },
+      });
+
+      // LAYER 4: Bordo 15m (più spesso e marcato per zone calde)
+      map.addLayer({
+        id: 'noise-15m-stroke',
+        type: 'line',
+        source: 'noise-stations-circles-15m',
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': [
+            'case',
+            ['>=', ['get', 'current_intensity'], 80],
+            3.0, // Bordo spesso per allarme rosso
+            1.8,
+          ],
+          'line-dasharray': [2, 1.5],
+        },
+      });
+
+      // LAYER 4B: ANELLO DI SEGNALAZIONE ALLARME PER ZONE ROSSE E VIOLA
+      map.addLayer({
+        id: 'noise-hotzone-warning-ring',
+        type: 'circle',
+        source: 'noise-stations-points',
+        filter: ['>=', ['get', 'current_intensity'], 80],
+        paint: {
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            11, 10,
+            14, 15,
+            17, 22,
+          ],
+          'circle-color': 'rgba(255, 23, 68, 0)',
+          'circle-stroke-width': 2.8,
+          'circle-stroke-color': [
+            'case',
+            ['>=', ['get', 'current_intensity'], 95],
+            '#d500f9',
+            '#ff1744',
+          ],
+          'circle-stroke-opacity': 0.95,
+        },
+      });
+
+      // LAYER 5: Pin centrale a cuore pulsante per individuazione immediata
+      map.addLayer({
+        id: 'noise-center-pin',
+        type: 'circle',
+        source: 'noise-stations-points',
+        paint: {
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            11, 5,
+            14, 7,
+            17, 10,
+          ],
+          'circle-color': ['get', 'color'],
+          'circle-stroke-width': 2.5,
+          'circle-stroke-color': '#ffffff',
+          'circle-opacity': 1,
+        },
+      });
+
+      // Click sui pin o cerchi per visualizzare il popup dettagliato
+      const handleStationClick = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
+        if (!e.features || e.features.length === 0) return;
+        const props = e.features[0].properties;
+        const geom = e.features[0].geometry;
+        if (!props) return;
+
+        let coords: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+        if (geom.type === 'Point') {
+          coords = geom.coordinates as [number, number];
+        }
+
+        const dateStr = props.last_reading_time 
+          ? new Date(Number(props.last_reading_time)).toLocaleTimeString('it-IT')
+          : 'In attesa di dati';
+
+        if (activePopupRef.current) {
+          activePopupRef.current.remove();
+        }
+
+        const popup = new maplibregl.Popup({ offset: 14, closeButton: true })
+          .setLngLat(coords)
+          .setHTML(`
+            <div style="font-family: system-ui, sans-serif; min-width: 200px; padding: 2px;">
+              <h4 style="margin: 0 0 4px 0; font-size: 14px; font-weight: bold; color: #0f172a;">
+                ${props.name}
+              </h4>
+              <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">
+                ID Slave: <code>${props.id}</code>
+              </div>
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                <span style="font-size: 12px; color: #475569;">Intensità attuale:</span>
+                <span style="font-size: 17px; font-weight: bold; color: ${props.color};">
+                  ${props.current_intensity} dB
+                </span>
+              </div>
+              <div style="font-size: 12px; margin-bottom: 6px;">
+                Stato acustico: <b style="color: ${props.color};">${props.label}</b>
+              </div>
+              <div style="font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 6px;">
+                Raggio sensore: <b>${NOISE_RADIUS_METERS} m</b><br/>
+                Ultimo campionamento: <b>${dateStr}</b>
+              </div>
+            </div>
+          `)
+          .addTo(map);
+
+        activePopupRef.current = popup;
+      };
+
+      map.on('click', 'noise-center-pin', handleStationClick);
+      map.on('click', 'noise-15m-fill', handleStationClick);
+
+      map.on('mouseenter', 'noise-center-pin', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'noise-center-pin', () => { map.getCanvas().style.cursor = ''; });
+      map.on('mouseenter', 'noise-15m-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'noise-15m-fill', () => { map.getCanvas().style.cursor = ''; });
+
+      mapRef.current = map;
+      setIsMapLoaded(true);
+    });
+
+    return () => {
+      map.remove();
+      mapRef.current = null;
+      setIsMapLoaded(false);
+    };
+  }, [currentStyle]);
+
+  // 2. Aggiornamento GeoJSON con i dati correnti di telemetria
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isMapLoaded) return;
+
+    const pointsSource = map.getSource('noise-stations-points') as maplibregl.GeoJSONSource | undefined;
+    const circlesSource = map.getSource('noise-stations-circles-15m') as maplibregl.GeoJSONSource | undefined;
+
+    if (!pointsSource || !circlesSource) return;
+
+    const pointFeatures = stations.map((station) => {
+      const noise = getNoiseLevel(station.current_intensity);
+      return {
+        type: 'Feature' as const,
+        properties: {
+          id: station.id,
+          name: station.name,
+          current_intensity: station.current_intensity,
+          last_reading_time: station.last_reading_time,
+          color: noise.color,
+          fillColor: noise.fillColor,
+          label: noise.label,
+        },
+        geometry: {
+          type: 'Point' as const,
+          coordinates: [station.longitude, station.latitude],
+        },
+      };
+    });
+
+    const circleFeatures = stations.map((station) => {
+      const noise = getNoiseLevel(station.current_intensity);
+      const ring = createGeoJSONCircle(station.longitude, station.latitude, NOISE_RADIUS_METERS, 36);
+
+      return {
+        type: 'Feature' as const,
+        properties: {
+          id: station.id,
+          name: station.name,
+          current_intensity: station.current_intensity,
+          last_reading_time: station.last_reading_time,
+          color: noise.color,
+          fillColor: noise.fillColor,
+          label: noise.label,
+        },
+        geometry: {
+          type: 'Polygon' as const,
+          coordinates: [ring],
+        },
+      };
+    });
+
+    pointsSource.setData({
+      type: 'FeatureCollection',
+      features: pointFeatures,
+    });
+
+    circlesSource.setData({
+      type: 'FeatureCollection',
+      features: circleFeatures,
+    });
+  }, [stations, isMapLoaded]);
+
+  // 3. Gestione della modalità visiva (Sfumature Heatmap / Aureole / Mista)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isMapLoaded) return;
+
+    const showHeatmap = visualMode === 'combined' || visualMode === 'gradient';
+    const showCircles = visualMode === 'combined' || visualMode === 'circles';
+
+    if (map.getLayer('noise-webgl-heatmap')) {
+      map.setLayoutProperty('noise-webgl-heatmap', 'visibility', showHeatmap ? 'visible' : 'none');
+    }
+    if (map.getLayer('noise-ambient-halo')) {
+      map.setLayoutProperty('noise-ambient-halo', 'visibility', showHeatmap ? 'visible' : 'none');
+    }
+    if (map.getLayer('noise-hotzone-radiance')) {
+      map.setLayoutProperty('noise-hotzone-radiance', 'visibility', showHeatmap ? 'visible' : 'none');
+    }
+    if (map.getLayer('noise-hotzone-warning-ring')) {
+      map.setLayoutProperty('noise-hotzone-warning-ring', 'visibility', showCircles ? 'visible' : 'none');
+    }
+    if (map.getLayer('noise-15m-fill')) {
+      map.setLayoutProperty('noise-15m-fill', 'visibility', showCircles ? 'visible' : 'none');
+    }
+    if (map.getLayer('noise-15m-stroke')) {
+      map.setLayoutProperty('noise-15m-stroke', 'visibility', showCircles ? 'visible' : 'none');
+    }
+  }, [visualMode, isMapLoaded]);
+
+  // 4. Pan / FlyTo alla stazione selezionata
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !isMapLoaded || !selectedStationId) return;
+
+    const station = stations.find((s) => s.id === selectedStationId);
+    if (!station) return;
+
+    map.flyTo({
+      center: [station.longitude, station.latitude],
+      zoom: 16.5,
+      essential: true,
+      duration: 1200,
+    });
+
+    const noise = getNoiseLevel(station.current_intensity);
+    const dateStr = station.last_reading_time 
+      ? new Date(station.last_reading_time).toLocaleTimeString('it-IT')
+      : 'In attesa di dati';
+
+    if (activePopupRef.current) {
+      activePopupRef.current.remove();
+    }
+
+    const popup = new maplibregl.Popup({ offset: 14, closeButton: true })
+      .setLngLat([station.longitude, station.latitude])
+      .setHTML(`
+        <div style="font-family: system-ui, sans-serif; min-width: 200px; padding: 2px;">
+          <h4 style="margin: 0 0 4px 0; font-size: 14px; font-weight: bold; color: #0f172a;">
+            ${station.name}
+          </h4>
+          <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">
+            ID Slave: <code>${station.id}</code>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+            <span style="font-size: 12px; color: #475569;">Intensità attuale:</span>
+            <span style="font-size: 17px; font-weight: bold; color: ${noise.color};">
+              ${station.current_intensity} dB
+            </span>
+          </div>
+          <div style="font-size: 12px; margin-bottom: 6px;">
+            Stato acustico: <b style="color: ${noise.color};">${noise.label}</b>
+          </div>
+          <div style="font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 6px;">
+            Raggio sensore: <b>${NOISE_RADIUS_METERS} m</b><br/>
+            Ultimo campionamento: <b>${dateStr}</b>
+          </div>
+        </div>
+      `)
+      .addTo(map);
+
+    activePopupRef.current = popup;
+  }, [selectedStationId, stations, isMapLoaded]);
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      {/* Contenitore Mappa */}
+      <div 
+        ref={mapContainerRef} 
+        style={{ width: '100%', height: '100%', zIndex: 1 }} 
+      />
+
+      {/* BARRA CONTROLLI MAPPA IN ALTO A SINISTRA: STILE + SFUMATURE */}
+      <div style={{
+        position: 'absolute',
+        top: '16px',
+        left: '16px',
+        backgroundColor: 'rgba(255, 255, 255, 0.94)',
+        backdropFilter: 'blur(6px)',
+        borderRadius: '8px',
+        padding: '6px 10px',
+        boxShadow: '0 3px 12px rgba(0,0,0,0.15)',
+        zIndex: 10,
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        fontSize: '11px',
+        color: '#334155',
+        flexWrap: 'wrap',
+      }}>
+        {/* SELEZIONE MODALITA' SFUMATURA */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+          <span style={{ fontWeight: 600, color: '#0f172a' }}>Effetto Visivo:</span>
+          <div style={{ display: 'flex', gap: '3px', backgroundColor: '#f1f5f9', padding: '2px', borderRadius: '5px' }}>
+            <button
+              onClick={() => setVisualMode('combined')}
+              style={{
+                padding: '3px 8px',
+                backgroundColor: visualMode === 'combined' ? '#2563eb' : 'transparent',
+                color: visualMode === 'combined' ? '#ffffff' : '#475569',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: visualMode === 'combined' ? 600 : 400,
+              }}
+              title="Mostra sia la sfumatura termica che i cerchi a 15 metri"
+            >
+              Mista (Heatmap + 15m)
+            </button>
+            <button
+              onClick={() => setVisualMode('gradient')}
+              style={{
+                padding: '3px 8px',
+                backgroundColor: visualMode === 'gradient' ? '#2563eb' : 'transparent',
+                color: visualMode === 'gradient' ? '#ffffff' : '#475569',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: visualMode === 'gradient' ? 600 : 400,
+              }}
+              title="Sfumatura termica continua per zone calde e fredde"
+            >
+              Sfumature Termiche
+            </button>
+            <button
+              onClick={() => setVisualMode('circles')}
+              style={{
+                padding: '3px 8px',
+                backgroundColor: visualMode === 'circles' ? '#2563eb' : 'transparent',
+                color: visualMode === 'circles' ? '#ffffff' : '#475569',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontWeight: visualMode === 'circles' ? 600 : 400,
+              }}
+              title="Solo cerchi calibrati a 15 metri"
+            >
+              Raggio Discreto 15m
+            </button>
+          </div>
+        </div>
+
+        {/* SELEZIONE TEMA MAPPA */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', borderLeft: '1px solid #cbd5e1', paddingLeft: '10px' }}>
+          <span style={{ fontWeight: 600 }}>Stile Mappa:</span>
+          <button
+            onClick={() => setCurrentStyle('positron')}
+            style={{
+              padding: '2px 7px',
+              backgroundColor: currentStyle === 'positron' ? '#0f172a' : '#e2e8f0',
+              color: currentStyle === 'positron' ? '#ffffff' : '#334155',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 500,
+            }}
+          >
+            Positron (Chiaro)
+          </button>
+          <button
+            onClick={() => setCurrentStyle('liberty')}
+            style={{
+              padding: '2px 7px',
+              backgroundColor: currentStyle === 'liberty' ? '#0f172a' : '#e2e8f0',
+              color: currentStyle === 'liberty' ? '#ffffff' : '#334155',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontWeight: 500,
+            }}
+          >
+            Liberty
+          </button>
+        </div>
+      </div>
+
+      {/* BADGE COMUNE DI TORINO (MAXBOUNDS) */}
+      <div style={{
+        position: 'absolute',
+        bottom: '24px',
+        right: '24px',
+        backgroundColor: 'rgba(15, 23, 42, 0.88)',
+        color: '#f8fafc',
+        borderRadius: '6px',
+        padding: '5px 12px',
+        fontSize: '11px',
+        zIndex: 10,
+        backdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+      }}>
+        <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22c55e', display: 'inline-block' }} />
+        <span>Ritaglio: <strong>Comune di Torino</strong> (MaxBounds Attivi)</span>
+      </div>
+    </div>
+  );
+}

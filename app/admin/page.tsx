@@ -26,6 +26,10 @@ interface BotKeyItem {
   auth_key: string;
   business_name: string | null;
   description: string | null;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  alert_radius_meters: number;
   is_active: number;
   is_used: number;
   used_by_chat_id: string | null;
@@ -53,6 +57,8 @@ export default function AdminDashboardPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [newBusinessName, setNewBusinessName] = useState('');
+  const [newAddress, setNewAddress] = useState('');
+  const [newRadius, setNewRadius] = useState<number>(150);
   const [searchFilter, setSearchFilter] = useState('');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -96,7 +102,10 @@ export default function AdminDashboardPage() {
 
   const handleCreateKey = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newBusinessName.trim()) return;
+    if (!newBusinessName.trim() || !newAddress.trim()) {
+      setActionMessage({ type: 'error', text: 'Inserisci sia il nome dell\'attività sia la via/indirizzo a Torino.' });
+      return;
+    }
 
     setIsGenerating(true);
     setActionMessage(null);
@@ -105,7 +114,11 @@ export default function AdminDashboardPage() {
       const res = await fetch('/api/admin/bot-keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ business_name: newBusinessName.trim() }),
+        body: JSON.stringify({
+          business_name: newBusinessName.trim(),
+          address: newAddress.trim(),
+          alert_radius_meters: newRadius || 150,
+        }),
       });
 
       const data = await res.json();
@@ -113,10 +126,12 @@ export default function AdminDashboardPage() {
         setActionMessage({ type: 'error', text: data.error || 'Errore nella creazione della chiave.' });
       } else {
         setNewBusinessName('');
+        setNewAddress('');
+        setNewRadius(150);
         setJustGeneratedKey(data.key);
         setActionMessage({
           type: 'success',
-          text: `Nuova chiave monouso generata con successo per "${data.key.business_name}".`,
+          text: `Nuova chiave monouso generata con successo per "${data.key.business_name}" con sede in ${data.key.address || newAddress}.`,
         });
         await loadData();
       }
@@ -436,46 +451,55 @@ export default function AdminDashboardPage() {
             </div>
 
             <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#cbd5e1' }}>
-              Fornisci questa chiave all&apos;attività commerciale. <b>La chiave può essere usata una sola volta</b>: una volta inserita nel bot Telegram, la chat verrà vincolata definitivamente e la chiave non potrà essere riutilizzata da nessun altro.
+              La sede e le coordinate geografiche sono <b>già registrate e certificate dall&apos;amministrazione</b>. L&apos;esercente non dovrà digitare alcuna via su Telegram: inserendo questa chiave monouso, il bot assocerà istantaneamente la chat alla sede pre-impostata.
             </p>
 
             <div
               style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
                 backgroundColor: '#0f172a',
                 border: '1px solid #334155',
                 borderRadius: '8px',
-                padding: '12px 16px',
+                padding: '14px 18px',
+                marginBottom: '12px',
               }}
             >
-              <code style={{ fontSize: '20px', fontWeight: 800, color: '#38bdf8', letterSpacing: '1px', flex: 1 }}>
-                {justGeneratedKey.auth_key}
-              </code>
-              <button
-                id="copy-just-generated-key"
-                onClick={() => copyToClipboard(justGeneratedKey.auth_key)}
-                style={{
-                  backgroundColor: copiedKey === justGeneratedKey.auth_key ? '#16a34a' : '#0284c7',
-                  color: '#ffffff',
-                  border: 'none',
-                  borderRadius: '6px',
-                  padding: '8px 16px',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}
-              >
-                {copiedKey === justGeneratedKey.auth_key ? <Check size={16} /> : <Copy size={16} />}
-                {copiedKey === justGeneratedKey.auth_key ? 'Copiata!' : 'Copia Chiave'}
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '8px' }}>
+                <code style={{ fontSize: '20px', fontWeight: 800, color: '#38bdf8', letterSpacing: '1px' }}>
+                  {justGeneratedKey.auth_key}
+                </code>
+                <button
+                  id="copy-just-generated-key"
+                  onClick={() => copyToClipboard(justGeneratedKey.auth_key)}
+                  style={{
+                    backgroundColor: copiedKey === justGeneratedKey.auth_key ? '#16a34a' : '#0284c7',
+                    color: '#ffffff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '8px 16px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  {copiedKey === justGeneratedKey.auth_key ? <Check size={16} /> : <Copy size={16} />}
+                  {copiedKey === justGeneratedKey.auth_key ? 'Copiata!' : 'Copia Chiave'}
+                </button>
+              </div>
+
+              <div style={{ fontSize: '13px', color: '#e2e8f0', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                <div>📍 <b>Sede Registrata:</b> {justGeneratedKey.address || 'Torino'}</div>
+                {justGeneratedKey.latitude && justGeneratedKey.longitude && (
+                  <div style={{ fontSize: '12px', color: '#94a3b8' }}>
+                    🌐 <b>Coordinate:</b> <code>{justGeneratedKey.latitude.toFixed(5)}° N, {justGeneratedKey.longitude.toFixed(5)}° E</code> | 📏 <b>Raggio Allerta:</b> {justGeneratedKey.alert_radius_meters || 150}m
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div style={{ marginTop: '10px', fontSize: '12px', color: '#94a3b8' }}>
+            <div style={{ fontSize: '12px', color: '#94a3b8' }}>
               Istruzioni per l&apos;esercente: <i>Apri il bot @NoiseTurin_bot e digita: <code>/login {justGeneratedKey.auth_key}</code></i>
             </div>
           </div>
@@ -567,7 +591,7 @@ export default function AdminDashboardPage() {
           </div>
         </div>
 
-        {/* Box Generazione Nuova Chiave */}
+        {/* Box Generazione Nuova Chiave con Via/Sede Pre-registrata */}
         <div
           style={{
             backgroundColor: '#1e293b',
@@ -584,61 +608,125 @@ export default function AdminDashboardPage() {
             </h2>
           </div>
           <p style={{ fontSize: '13px', color: '#94a3b8', margin: '0 0 18px 0' }}>
-            Crea una chiave univoca ad alta entropia per un esercizio commerciale o residente torinese. Ogni chiave può essere riscattata una sola volta nel bot Telegram.
+            Inserisci la via e il numero civico dell&apos;attività commerciale: l&apos;indirizzo verrà geocodificato e salvato direttamente dall&apos;amministrazione, eliminando qualsiasi errore di digitazione su Telegram.
           </p>
 
           <form onSubmit={handleCreateKey} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-            <input
-              id="business-name-input"
-              type="text"
-              value={newBusinessName}
-              onChange={(e) => setNewBusinessName(e.target.value)}
-              placeholder="Nome Attività (es. Bar Santa Giulia, Pasticceria Baretti...)"
-              disabled={isGenerating}
-              required
-              style={{
-                flex: '1 1 340px',
-                backgroundColor: '#0f172a',
-                border: '1px solid #334155',
-                borderRadius: '8px',
-                padding: '12px 16px',
-                color: '#f8fafc',
-                fontSize: '14px',
-                outline: 'none',
-              }}
-            />
-            <button
-              id="generate-key-submit-button"
-              type="submit"
-              disabled={isGenerating || !newBusinessName.trim()}
-              style={{
-                backgroundColor: '#0284c7',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '12px 22px',
-                fontSize: '14px',
-                fontWeight: 600,
-                cursor: isGenerating ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                boxShadow: '0 4px 14px rgba(2, 132, 199, 0.4)',
-                opacity: isGenerating ? 0.7 : 1,
-              }}
-            >
-              {isGenerating ? (
-                <>
-                  <RefreshCw size={16} className="animate-spin" />
-                  <span>Generazione in corso...</span>
-                </>
-              ) : (
-                <>
-                  <KeyRound size={16} />
-                  <span>Genera Chiave Monouso</span>
-                </>
-              )}
-            </button>
+            <div style={{ flex: '1 1 260px' }}>
+              <label htmlFor="business-name-input" style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px', fontWeight: 600 }}>
+                Nome Attività / Locale
+              </label>
+              <input
+                id="business-name-input"
+                type="text"
+                value={newBusinessName}
+                onChange={(e) => setNewBusinessName(e.target.value)}
+                placeholder="es. Bar Santa Giulia, Pasticceria Baretti..."
+                disabled={isGenerating}
+                required
+                style={{
+                  width: '100%',
+                  backgroundColor: '#0f172a',
+                  border: '1px solid #334155',
+                  borderRadius: '8px',
+                  padding: '11px 14px',
+                  color: '#f8fafc',
+                  fontSize: '13px',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            <div style={{ flex: '1 1 320px' }}>
+              <label htmlFor="business-address-input" style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px', fontWeight: 600 }}>
+                Sede / Indirizzo a Torino (Via e Civico)
+              </label>
+              <input
+                id="business-address-input"
+                type="text"
+                value={newAddress}
+                onChange={(e) => setNewAddress(e.target.value)}
+                placeholder="es. Via Santa Giulia 12, Torino oppure Via Po 14"
+                disabled={isGenerating}
+                required
+                style={{
+                  width: '100%',
+                  backgroundColor: '#0f172a',
+                  border: '1px solid #334155',
+                  borderRadius: '8px',
+                  padding: '11px 14px',
+                  color: '#f8fafc',
+                  fontSize: '13px',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            <div style={{ width: '130px' }}>
+              <label htmlFor="business-radius-input" style={{ display: 'block', fontSize: '12px', color: '#94a3b8', marginBottom: '4px', fontWeight: 600 }}>
+                Raggio Allerta (m)
+              </label>
+              <input
+                id="business-radius-input"
+                type="number"
+                min="30"
+                max="2000"
+                value={newRadius}
+                onChange={(e) => setNewRadius(Number(e.target.value))}
+                placeholder="150"
+                disabled={isGenerating}
+                required
+                style={{
+                  width: '100%',
+                  backgroundColor: '#0f172a',
+                  border: '1px solid #334155',
+                  borderRadius: '8px',
+                  padding: '11px 14px',
+                  color: '#f8fafc',
+                  fontSize: '13px',
+                  outline: 'none',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'flex-end', flex: '0 0 auto' }}>
+              <button
+                id="generate-key-submit-button"
+                type="submit"
+                disabled={isGenerating || !newBusinessName.trim() || !newAddress.trim()}
+                style={{
+                  backgroundColor: '#0284c7',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '11px 22px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: isGenerating ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 14px rgba(2, 132, 199, 0.4)',
+                  opacity: isGenerating ? 0.7 : 1,
+                  height: '42px',
+                }}
+              >
+                {isGenerating ? (
+                  <>
+                    <RefreshCw size={16} className="animate-spin" />
+                    <span>Geocodifica & Generazione...</span>
+                  </>
+                ) : (
+                  <>
+                    <KeyRound size={16} />
+                    <span>Genera Chiave Monouso</span>
+                  </>
+                )}
+              </button>
+            </div>
           </form>
         </div>
 
@@ -668,7 +756,7 @@ export default function AdminDashboardPage() {
                 Elenco Chiavi Autorizzazione Telegram ({filteredKeys.length})
               </h3>
               <p style={{ fontSize: '12px', color: '#94a3b8', margin: '4px 0 0 0' }}>
-                Monitoraggio dello stato di utilizzo e revoca immediata
+                Sede e perimetro pre-configurati dall&apos;amministrazione
               </p>
             </div>
 
@@ -683,7 +771,7 @@ export default function AdminDashboardPage() {
                 type="text"
                 value={searchFilter}
                 onChange={(e) => setSearchFilter(e.target.value)}
-                placeholder="Cerca attività o chiave..."
+                placeholder="Cerca attività, via o chiave..."
                 style={{
                   width: '100%',
                   backgroundColor: '#0f172a',
@@ -704,20 +792,20 @@ export default function AdminDashboardPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
               <thead>
                 <tr style={{ backgroundColor: 'rgba(15, 23, 42, 0.6)', borderBottom: '1px solid rgba(255, 255, 255, 0.08)' }}>
-                  <th style={{ padding: '14px 20px', color: '#94a3b8', fontWeight: 600 }}>Attività Commerciale</th>
-                  <th style={{ padding: '14px 20px', color: '#94a3b8', fontWeight: 600 }}>Chiave Monouso</th>
-                  <th style={{ padding: '14px 20px', color: '#94a3b8', fontWeight: 600 }}>Stato</th>
-                  <th style={{ padding: '14px 20px', color: '#94a3b8', fontWeight: 600 }}>Utenza Telegram Collegata</th>
-                  <th style={{ padding: '14px 20px', color: '#94a3b8', fontWeight: 600 }}>Creata da</th>
-                  <th style={{ padding: '14px 20px', color: '#94a3b8', fontWeight: 600 }}>Data Creazione</th>
-                  <th style={{ padding: '14px 20px', color: '#94a3b8', fontWeight: 600, textAlign: 'right' }}>Azioni</th>
+                  <th style={{ padding: '14px 18px', color: '#94a3b8', fontWeight: 600 }}>Attività Commerciale</th>
+                  <th style={{ padding: '14px 18px', color: '#94a3b8', fontWeight: 600 }}>Chiave Monouso</th>
+                  <th style={{ padding: '14px 18px', color: '#94a3b8', fontWeight: 600 }}>Sede Registrata & Coordinate</th>
+                  <th style={{ padding: '14px 18px', color: '#94a3b8', fontWeight: 600 }}>Stato</th>
+                  <th style={{ padding: '14px 18px', color: '#94a3b8', fontWeight: 600 }}>Utenza Telegram</th>
+                  <th style={{ padding: '14px 18px', color: '#94a3b8', fontWeight: 600 }}>Creata da</th>
+                  <th style={{ padding: '14px 18px', color: '#94a3b8', fontWeight: 600, textAlign: 'right' }}>Azioni</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredKeys.length === 0 ? (
                   <tr>
                     <td colSpan={7} style={{ padding: '36px 20px', textAlign: 'center', color: '#94a3b8' }}>
-                      Nessuna chiave trovata. Genera una nuova chiave sopra.
+                      Nessuna chiave trovata. Genera una nuova chiave sopra inserendo nome e via.
                     </td>
                   </tr>
                 ) : (
@@ -734,11 +822,11 @@ export default function AdminDashboardPage() {
                           backgroundColor: isRevoked ? 'rgba(239, 68, 68, 0.03)' : 'transparent',
                         }}
                       >
-                        <td style={{ padding: '14px 20px', fontWeight: 600, color: '#f8fafc' }}>
+                        <td style={{ padding: '14px 18px', fontWeight: 600, color: '#f8fafc' }}>
                           {item.business_name || item.description || 'Attività generica'}
                         </td>
 
-                        <td style={{ padding: '14px 20px' }}>
+                        <td style={{ padding: '14px 18px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <code
                               style={{
@@ -768,7 +856,22 @@ export default function AdminDashboardPage() {
                           </div>
                         </td>
 
-                        <td style={{ padding: '14px 20px' }}>
+                        <td style={{ padding: '14px 18px', maxWidth: '300px' }}>
+                          <div style={{ color: '#e2e8f0', fontSize: '13px', fontWeight: 500 }}>
+                            {item.address || 'Torino'}
+                          </div>
+                          {item.latitude && item.longitude ? (
+                            <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: '2px' }}>
+                              <code>{item.latitude.toFixed(5)}°N, {item.longitude.toFixed(5)}°E</code> · Raggio: <b>{item.alert_radius_meters || 150}m</b>
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '11px', color: '#64748b', fontStyle: 'italic' }}>
+                              Raggio: {item.alert_radius_meters || 150}m
+                            </div>
+                          )}
+                        </td>
+
+                        <td style={{ padding: '14px 18px' }}>
                           {isAvailable && (
                             <span
                               style={{
@@ -823,13 +926,13 @@ export default function AdminDashboardPage() {
                           )}
                         </td>
 
-                        <td style={{ padding: '14px 20px', color: '#cbd5e1' }}>
+                        <td style={{ padding: '14px 18px', color: '#cbd5e1' }}>
                           {item.used_by_chat_id ? (
                             <div style={{ display: 'flex', flexDirection: 'column' }}>
                               <span>Chat ID: <code>{item.used_by_chat_id}</code></span>
                               {item.used_at && (
                                 <span style={{ fontSize: '11px', color: '#64748b' }}>
-                                  Attivata: {new Date(item.used_at).toLocaleDateString('it-IT')} {new Date(item.used_at).toLocaleTimeString('it-IT')}
+                                  Attivata: {new Date(item.used_at).toLocaleDateString('it-IT')}
                                 </span>
                               )}
                             </div>
@@ -838,15 +941,11 @@ export default function AdminDashboardPage() {
                           )}
                         </td>
 
-                        <td style={{ padding: '14px 20px', color: '#94a3b8' }}>
+                        <td style={{ padding: '14px 18px', color: '#94a3b8' }}>
                           {item.created_by || 'admin'}
                         </td>
 
-                        <td style={{ padding: '14px 20px', color: '#94a3b8', fontSize: '12px' }}>
-                          {item.created_at}
-                        </td>
-
-                        <td style={{ padding: '14px 20px', textAlign: 'right' }}>
+                        <td style={{ padding: '14px 18px', textAlign: 'right' }}>
                           {!isRevoked ? (
                             <button
                               id={`revoke-btn-${item.auth_key}`}

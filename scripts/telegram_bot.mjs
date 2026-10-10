@@ -149,6 +149,10 @@ function redeemAuthKey(key, chatId) {
       return {
         success: true,
         businessName: row.business_name || row.description || 'Attività registrata',
+        address: row.address,
+        latitude: row.latitude,
+        longitude: row.longitude,
+        radius: row.alert_radius_meters || 150,
       };
     }
     return {
@@ -164,9 +168,25 @@ function redeemAuthKey(key, chatId) {
     WHERE auth_key = ?
   `).run(String(chatId), Date.now(), row.auth_key);
 
+  // CAMBIO DI PARADIGMA: assegna istantaneamente all'iscritto Telegram la sede e le coordinate impostate dall'amministratore
+  upsertSubscriber({
+    chat_id: chatId,
+    auth_key: row.auth_key,
+    is_authenticated: 1,
+    is_active: 1,
+    address: row.address || row.business_name || 'Torino',
+    latitude: row.latitude,
+    longitude: row.longitude,
+    alert_radius_meters: row.alert_radius_meters || 150,
+  });
+
   return {
     success: true,
     businessName: row.business_name || row.description || 'Attività registrata',
+    address: row.address,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    radius: row.alert_radius_meters || 150,
   };
 }
 
@@ -270,20 +290,32 @@ async function handleIncomingMessage(msg) {
     if (possibleKey) {
       const redeem = redeemAuthKey(possibleKey, chatId);
       if (redeem.success) {
-        upsertSubscriber({
-          chat_id: chatId,
-          username,
-          first_name: firstName,
-          auth_key: possibleKey.trim(),
-          is_authenticated: 1,
-        });
+        let stationsMsg = '';
+        if (redeem.latitude && redeem.longitude) {
+          const stations = getAllStationsFromDb();
+          const inRange = [];
+          for (const st of stations) {
+            const d = calculateHaversineDistanceMeters(redeem.latitude, redeem.longitude, st.latitude, st.longitude);
+            if (d <= redeem.radius) inRange.push({ st, d });
+          }
+          inRange.sort((a, b) => a.d - b.d);
+          if (inRange.length > 0) {
+            stationsMsg = `\n\n📡 <b>Celle Acustiche nel tuo raggio (${inRange.length}):</b>\n` +
+              inRange.map(m => `• <b>${m.st.name}</b> (a ${Math.round(m.d)}m)`).join('\n');
+          } else {
+            stationsMsg = `\n\nℹ️ <i>Nessuna stazione rilevata entro ${redeem.radius}m.</i>`;
+          }
+        }
+
         await sendMessage(
           chatId,
           `✅ <b>Autenticazione riuscita con successo!</b>\n\n` +
           `🏢 <b>Attività:</b> ${redeem.businessName}\n` +
-          `🔑 <i>Chiave monouso attivata e vincolata a questo profilo.</i>\n\n` +
-          `📍 <b>Ora imposta la sede della tua attività a Torino:</b>\n` +
-          `Invia semplicemente la <b>via e il numero civico</b> (es: <code>Via Po 14</code> oppure <code>Via Roma 10</code>):`
+          `📍 <b>Sede Registrata:</b> ${redeem.address || 'Torino'}\n` +
+          (redeem.latitude ? `🌐 <b>Coordinate:</b> <code>${redeem.latitude.toFixed(5)}° N, ${redeem.longitude.toFixed(5)}° E</code>\n` : '') +
+          `📏 <b>Raggio Allerta:</b> <b>${redeem.radius} metri</b>` +
+          stationsMsg +
+          `\n\n🟢 <b>Monitoraggio ATTIVO:</b> <i>Riceverai avvisi automatici in tempo reale se il rumore attorno alla tua attività supera i 70 dB.</i>`
         );
         return;
       } else {
@@ -301,12 +333,11 @@ async function handleIncomingMessage(msg) {
       await sendMessage(
         chatId,
         `👋 Bentornato <b>${firstName}</b>!\n\n` +
-        `🏢 <b>Sede attuale:</b> ${subscriber.address || '<i>Nessun indirizzo impostato</i>'}\n` +
+        `🏢 <b>Sede Registrata:</b> ${subscriber.address || 'Torino'}\n` +
         `📏 <b>Raggio di allerta:</b> <b>${radius} metri</b>\n\n` +
         `<b>Comandi disponibili:</b>\n` +
-        `• Invia un indirizzo (es: <code>Via Po 14</code>) per cambiare sede\n` +
-        `• <code>/raggio &lt;metri&gt;</code> - Modifica raggio di copertura (es: /raggio 150)\n` +
         `• <code>/stazioni</code> - Elenco sensori nel tuo perimetro (${radius}m)\n` +
+        `• <code>/raggio &lt;metri&gt;</code> - Modifica raggio di copertura (es: /raggio 150)\n` +
         `• <code>/stato</code> - Riepilogo configurazione attiva\n` +
         `• <code>/test_allerta</code> - Simula una notifica di rumore critico\n` +
         `• <code>/aiuto</code> - Guida comandi`
@@ -339,20 +370,32 @@ async function handleIncomingMessage(msg) {
 
     const redeem = redeemAuthKey(keyToTest, chatId);
     if (redeem.success) {
-      upsertSubscriber({
-        chat_id: chatId,
-        username,
-        first_name: firstName,
-        auth_key: keyToTest.trim(),
-        is_authenticated: 1,
-      });
+      let stationsMsg = '';
+      if (redeem.latitude && redeem.longitude) {
+        const stations = getAllStationsFromDb();
+        const inRange = [];
+        for (const st of stations) {
+          const d = calculateHaversineDistanceMeters(redeem.latitude, redeem.longitude, st.latitude, st.longitude);
+          if (d <= redeem.radius) inRange.push({ st, d });
+        }
+        inRange.sort((a, b) => a.d - b.d);
+        if (inRange.length > 0) {
+          stationsMsg = `\n\n📡 <b>Celle Acustiche nel tuo raggio (${inRange.length}):</b>\n` +
+            inRange.map(m => `• <b>${m.st.name}</b> (a ${Math.round(m.d)}m)`).join('\n');
+        } else {
+          stationsMsg = `\n\nℹ️ <i>Nessuna stazione rilevata entro ${redeem.radius}m.</i>`;
+        }
+      }
+
       await sendMessage(
         chatId,
         `✅ <b>Autenticazione riuscita!</b>\n\n` +
         `🏢 <b>Attività:</b> ${redeem.businessName}\n` +
-        `🔑 <i>Chiave monouso attivata e vincolata a questo profilo.</i>\n\n` +
-        `📍 <b>Inserisci la via e numero civico della tua attività a Torino:</b>\n` +
-        `<i>(Esempio: <code>Via Po 14</code> oppure <code>Via Roma 10</code>)</i>`
+        `📍 <b>Sede Registrata:</b> ${redeem.address || 'Torino'}\n` +
+        (redeem.latitude ? `🌐 <b>Coordinate:</b> <code>${redeem.latitude.toFixed(5)}° N, ${redeem.longitude.toFixed(5)}° E</code>\n` : '') +
+        `📏 <b>Raggio Allerta:</b> <b>${redeem.radius} metri</b>` +
+        stationsMsg +
+        `\n\n🟢 <b>Monitoraggio ATTIVO:</b> <i>Riceverai avvisi automatici in tempo reale se il rumore attorno alla tua attività supera i 70 dB.</i>`
       );
       return;
     } else {
@@ -506,75 +549,24 @@ async function handleIncomingMessage(msg) {
     await sendMessage(
       chatId,
       `📖 <b>GUIDA COMANDI BOT TORINO NOISE</b>\n\n` +
-      `• Invia una via torinese con civico (es: <code>Via Po 14</code>) per salvare la tua sede\n` +
-      `• <code>/raggio &lt;metri&gt;</code> - Imposta il raggio di allerta personalizzato (default 150m)\n` +
-      `• <code>/stazioni</code> - Elenco sensori nel tuo raggio d'azione\n` +
-      `• <code>/stato</code> - Riepilogo configurazione e coordinate\n` +
-      `• <code>/test_allerta</code> - Invia una simulazione di allerta`
+      `• <code>/stazioni</code> - Elenco sensori nel tuo perimetro di monitoraggio\n` +
+      `• <code>/raggio &lt;metri&gt;</code> - Modifica raggio di allerta (default: 150m, es: /raggio 200)\n` +
+      `• <code>/stato</code> - Riepilogo sede registrata, coordinate e timer anti-spam\n` +
+      `• <code>/test_allerta</code> - Invia una simulazione di notifica sonora\n\n` +
+      `🔒 <i>Nota: La sede della tua attività è pre-configurata e certificata dall'amministrazione comunale all'emissione della chiave monouso.</i>`
     );
     return;
   }
 
-  // 8. Trattamento del testo libero come INDIRIZZO DELL'ATTIVITÀ
-  let addressInput = rawText;
-  if (rawText.startsWith('/indirizzo')) {
-    const parts = rawText.split(/\s+/);
-    addressInput = parts.slice(1).join(' ').trim();
-  }
-
-  if (!addressInput) {
-    await sendMessage(chatId, `⚠️ Inserisci la via e il numero civico. Esempio:\n<code>Via Po 14</code>`);
-    return;
-  }
-
-  await sendMessage(chatId, `🔍 <i>Localizzazione di "${addressInput}" nel comune di Torino in corso...</i>`);
-
-  const geocoded = await geocodeTurinAddress(addressInput);
-
-  if (!geocoded) {
-    await sendMessage(
-      chatId,
-      `❌ Impossibile individuare l'indirizzo torinese "${addressInput}".\nProva con un formato tipo: <code>Via Po 14</code> o <code>Piazza Castello 5</code>.`
-    );
-    return;
-  }
-
-  const radius = subscriber.alert_radius_meters || 150;
-
-  upsertSubscriber({
-    chat_id: chatId,
-    address: geocoded.displayName,
-    latitude: geocoded.lat,
-    longitude: geocoded.lon,
-    alert_radius_meters: radius,
-  });
-
-  // Calcola celle acustiche nel raggio parametrizzato
-  const stations = getAllStationsFromDb();
-  const inRange = [];
-
-  for (const st of stations) {
-    const d = calculateHaversineDistanceMeters(geocoded.lat, geocoded.lon, st.latitude, st.longitude);
-    if (d <= radius) inRange.push({ st, d });
-  }
-  inRange.sort((a, b) => a.d - b.d);
-
-  let stationListText = '';
-  if (inRange.length > 0) {
-    stationListText = `\n\n📡 <b>Celle/Sensori nel tuo raggio di ${radius}m (${inRange.length}):</b>\n` +
-      inRange.map((item, i) => `${i + 1}. <b>${item.st.name}</b> [<code>${item.st.id}</code>] — a <b>${Math.round(item.d)} metri</b>`).join('\n') +
-      `\n\n🔔 <i>Riceverai avvisi automatici solo da queste celle se il rumore diventa eccessivo!</i>`;
-  } else {
-    stationListText = `\n\nℹ️ <i>Nessun sensore rilevato entro ${radius}m. Puoi estendere il raggio con</i> <code>/raggio &lt;metri&gt;</code> (es: /raggio 300).`;
-  }
-
+  // 8. Ricezione di testo libero da utente autenticato: promemoria sede certificata dall'amministrazione
   await sendMessage(
     chatId,
-    `🎯 <b>Sede impostata con successo!</b>\n\n` +
-    `🏢 <b>Attività:</b> ${geocoded.displayName}\n` +
-    `📍 <b>Coordinate:</b> <code>${geocoded.lat.toFixed(5)}° N, ${geocoded.lon.toFixed(5)}° E</code>\n` +
-    `📏 <b>Raggio configurato:</b> <b>${radius} metri</b>` +
-    stationListText
+    `ℹ️ <b>Sede della tua attività già registrata:</b>\n` +
+    `🏢 <b>${subscriber.address || 'Torino'}</b>\n\n` +
+    `🔒 <i>Per garantire la massima precisione ed evitare errori di sintassi o localizzazione, la sede è gestita e validata direttamente dall'amministrazione comunale.</i>\n\n` +
+    `• Usa <code>/stazioni</code> per verificare le celle nel tuo perimetro.\n` +
+    `• Usa <code>/stato</code> per consultare la tua configurazione attiva.\n` +
+    `• Se devi modificare o correggere la sede, contatta l'amministratore del servizio.`
   );
 }
 

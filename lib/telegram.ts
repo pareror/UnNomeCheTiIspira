@@ -338,21 +338,14 @@ export async function handleSubscriberUpdate(update: any): Promise<void> {
     if (possibleKey) {
       const redeem = redeemBotAuthKey(possibleKey, chatIdStr);
       if (redeem.success) {
-        upsertTelegramSubscriber({
-          chat_id: chatIdStr,
-          username,
-          first_name: firstName,
-          auth_key: possibleKey.trim(),
-          is_authenticated: 1,
-          is_active: 1,
-        });
         await sendTelegramMessage(
           chatIdStr,
           `✅ <b>Autenticazione riuscita con successo!</b>\n\n` +
             `🏢 <b>Attività:</b> ${redeem.business_name || 'Attività registrata'}\n` +
-            `🔑 <i>Chiave monouso attivata e vincolata a questo profilo.</i>\n\n` +
-            `📍 <b>Ora imposta la sede della tua attività a Torino:</b>\n` +
-            `Invia semplicemente la <b>via e il numero civico</b> (es: <code>Via Po 14</code> oppure <code>Via Roma 10</code>):`
+            `📍 <b>Sede Registrata:</b> ${redeem.address || 'Torino'}\n` +
+            (redeem.latitude ? `🌐 <b>Coordinate:</b> <code>${redeem.latitude.toFixed(5)}° N, ${redeem.longitude!.toFixed(5)}° E</code>\n` : '') +
+            `📏 <b>Raggio Allerta:</b> <b>${redeem.alert_radius_meters || 150} metri</b>\n\n` +
+            `🟢 <b>Monitoraggio ATTIVO:</b> <i>Riceverai avvisi automatici in tempo reale se il rumore attorno alla tua attività supera i 70 dB.</i>`
         );
         return;
       }
@@ -369,12 +362,11 @@ export async function handleSubscriberUpdate(update: any): Promise<void> {
       await sendTelegramMessage(
         chatIdStr,
         `👋 Bentornato <b>${firstName}</b>!\n\n` +
-          `🏢 <b>Sede attuale:</b> ${subscriber.address || '<i>Nessun indirizzo impostato</i>'}\n` +
+          `🏢 <b>Sede Registrata:</b> ${subscriber.address || 'Torino'}\n` +
           `📏 <b>Raggio di allerta:</b> <b>${radius} metri</b>\n\n` +
           `<b>Comandi disponibili:</b>\n` +
-          `• Invia un indirizzo (es: <code>Via Po 14</code>) per cambiare sede\n` +
-          `• <code>/raggio &lt;metri&gt;</code> - Modifica raggio di copertura (es: /raggio 150)\n` +
           `• <code>/stazioni</code> - Elenco sensori nel tuo perimetro (${radius}m)\n` +
+          `• <code>/raggio &lt;metri&gt;</code> - Modifica raggio di copertura (es: /raggio 150)\n` +
           `• <code>/stato</code> - Riepilogo configurazione attiva\n` +
           `• <code>/test_allerta</code> - Simula una notifica di rumore critico\n` +
           `• <code>/stop</code> - Disattiva le notifiche\n` +
@@ -423,21 +415,14 @@ export async function handleSubscriberUpdate(update: any): Promise<void> {
 
     const redeem = redeemBotAuthKey(keyToTest, chatIdStr);
     if (redeem.success) {
-      upsertTelegramSubscriber({
-        chat_id: chatIdStr,
-        username,
-        first_name: firstName,
-        auth_key: keyToTest.trim(),
-        is_authenticated: 1,
-        is_active: 1,
-      });
       await sendTelegramMessage(
         chatIdStr,
         `✅ <b>Autenticazione riuscita!</b>\n\n` +
           `🏢 <b>Attività:</b> ${redeem.business_name || 'Attività registrata'}\n` +
-          `🔑 <i>Chiave attivata e vincolata a questo profilo.</i>\n\n` +
-          `📍 <b>Inserisci la via e numero civico della tua attività a Torino:</b>\n` +
-          `<i>(Esempio: <code>Via Po 14</code> oppure <code>Via Roma 10</code>)</i>`
+          `📍 <b>Sede Registrata:</b> ${redeem.address || 'Torino'}\n` +
+          (redeem.latitude ? `🌐 <b>Coordinate:</b> <code>${redeem.latitude.toFixed(5)}° N, ${redeem.longitude!.toFixed(5)}° E</code>\n` : '') +
+          `📏 <b>Raggio Allerta:</b> <b>${redeem.alert_radius_meters || 150} metri</b>\n\n` +
+          `🟢 <b>Monitoraggio ATTIVO:</b> <i>Riceverai avvisi automatici in tempo reale se il rumore attorno alla tua attività supera i 70 dB.</i>`
       );
       return;
     }
@@ -557,64 +542,25 @@ export async function handleSubscriberUpdate(update: any): Promise<void> {
     await sendTelegramMessage(
       chatIdStr,
       `📖 <b>GUIDA COMANDI BOT TORINO NOISE</b>\n\n` +
-        `• Invia una via torinese con civico (es: <code>Via Po 14</code>) per salvare la tua sede\n` +
-        `• <code>/raggio &lt;metri&gt;</code> - Imposta il raggio di allerta personalizzato (default 150m)\n` +
-        `• <code>/stazioni</code> - Elenco sensori nel tuo raggio d'azione\n` +
-        `• <code>/stato</code> - Riepilogo configurazione e coordinate\n` +
-        `• <code>/test_allerta</code> - Invia una simulazione di allerta\n` +
-        `• <code>/stop</code> - Disattiva le notifiche`
+        `• <code>/stazioni</code> - Elenco sensori nel tuo perimetro di monitoraggio\n` +
+        `• <code>/raggio &lt;metri&gt;</code> - Modifica raggio di allerta (default: 150m, es: /raggio 200)\n` +
+        `• <code>/stato</code> - Riepilogo sede registrata, coordinate e timer anti-spam\n` +
+        `• <code>/test_allerta</code> - Invia una simulazione di allerta sonora\n` +
+        `• <code>/stop</code> - Disattiva temporaneamente le notifiche\n\n` +
+        `🔒 <i>Nota: La sede della tua attività è certificata e pre-configurata dall'amministrazione comunale all'attivazione della chiave monouso.</i>`
     );
     return;
   }
 
-  // 9. Trattamento del testo libero come INDIRIZZO DELL'ATTIVITÀ
-  let addressInput = rawText;
-  if (rawText.startsWith('/indirizzo')) {
-    addressInput = rawText.split(/\s+/).slice(1).join(' ').trim();
-  }
-
-  if (!addressInput) {
-    await sendTelegramMessage(chatIdStr, `⚠️ Inserisci la via e il numero civico. Esempio:\n<code>Via Po 14</code>`);
-    return;
-  }
-
-  await sendTelegramMessage(chatIdStr, `🔍 <i>Localizzazione di "${addressInput}" nel comune di Torino in corso...</i>`);
-
-  const geocoded = await geocodeAddressTurin(addressInput);
-  if (!geocoded) {
-    await sendTelegramMessage(
-      chatIdStr,
-      `❌ Impossibile individuare l'indirizzo torinese "${addressInput}".\nProva con un formato tipo: <code>Via Po 14</code> o <code>Piazza Castello 5</code>.`
-    );
-    return;
-  }
-
-  const radius = subscriber.alert_radius_meters || 150;
-  upsertTelegramSubscriber({
-    chat_id: chatIdStr,
-    address: geocoded.formattedAddress,
-    latitude: geocoded.latitude,
-    longitude: geocoded.longitude,
-    alert_radius_meters: radius,
-  });
-
-  const inRange = findStationsInRange(geocoded.latitude, geocoded.longitude, radius);
-  const stationListText =
-    inRange.length > 0
-      ? `\n\n📡 <b>Celle/Sensori nel tuo raggio di ${radius}m (${inRange.length}):</b>\n` +
-        inRange
-          .map((m, i) => `${i + 1}. <b>${m.station.name}</b> [<code>${m.station.id}</code>] — a <b>${Math.round(m.distanceMeters)} metri</b>`)
-          .join('\n') +
-        `\n\n🔔 <i>Riceverai avvisi automatici solo da queste celle se il rumore diventa eccessivo!</i>`
-      : `\n\nℹ️ <i>Nessun sensore rilevato entro ${radius}m. Puoi estendere il raggio con</i> <code>/raggio &lt;metri&gt;</code> (es: /raggio 300).`;
-
+  // 9. Ricezione testo libero da utente autenticato: promemoria della sede certificata dall'amministrazione
   await sendTelegramMessage(
     chatIdStr,
-    `🎯 <b>Sede impostata con successo!</b>\n\n` +
-      `🏢 <b>Attività:</b> ${geocoded.formattedAddress}\n` +
-      `📍 <b>Coordinate:</b> <code>${geocoded.latitude.toFixed(5)}° N, ${geocoded.longitude.toFixed(5)}° E</code>\n` +
-      `📏 <b>Raggio configurato:</b> <b>${radius} metri</b>` +
-      stationListText
+    `ℹ️ <b>Sede della tua attività già registrata:</b>\n` +
+      `🏢 <b>${subscriber.address || 'Torino'}</b>\n\n` +
+      `🔒 <i>Per garantire la massima precisione ed evitare errori di sintassi o localizzazione, la sede è gestita e validata direttamente dall'amministrazione comunale.</i>\n\n` +
+      `• Usa <code>/stazioni</code> per verificare le celle nel tuo perimetro.\n` +
+      `• Usa <code>/stato</code> per consultare la tua configurazione attiva.\n` +
+      `• Se devi modificare o correggere la sede, contatta l'amministratore del servizio.`
   );
 }
 

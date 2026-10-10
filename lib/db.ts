@@ -124,8 +124,12 @@ function initializeDatabase(db: Database.Database) {
     );
   `);
 
-  // Migrazioni colonne bot_auth_keys per supporto chiavi monouso
+  // Migrazioni colonne bot_auth_keys per supporto chiavi monouso e indirizzo pre-configurato
   try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN business_name TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN address TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN latitude REAL;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN longitude REAL;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN alert_radius_meters INTEGER NOT NULL DEFAULT 150;`); } catch {}
   try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN is_used INTEGER NOT NULL DEFAULT 0;`); } catch {}
   try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN used_by_chat_id TEXT;`); } catch {}
   try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN used_at INTEGER;`); } catch {}
@@ -654,6 +658,10 @@ export interface BotAuthKey {
   auth_key: string;
   business_name: string | null;
   description: string | null;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  alert_radius_meters: number;
   is_active: number;
   is_used: number;
   used_by_chat_id: string | null;
@@ -682,11 +690,19 @@ export function verifyBotAuthKey(key: string): boolean {
   return Boolean(row);
 }
 
-// Riscatta una chiave monouso per conto di una chat Telegram
+// Riscatta una chiave monouso per conto di una chat Telegram e associa automaticamente indirizzo e coordinate pre-configurati dall'amministratore
 export function redeemBotAuthKey(
   key: string,
   chatId: string
-): { success: boolean; error?: string; business_name?: string } {
+): {
+  success: boolean;
+  error?: string;
+  business_name?: string;
+  address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  alert_radius_meters?: number;
+} {
   const db = getDb();
   const cleanKey = key.trim();
   const row = db
@@ -705,6 +721,10 @@ export function redeemBotAuthKey(
       return {
         success: true,
         business_name: row.business_name || row.description || 'Attività registrata',
+        address: row.address,
+        latitude: row.latitude,
+        longitude: row.longitude,
+        alert_radius_meters: row.alert_radius_meters || 150,
       };
     }
     return {
@@ -720,20 +740,76 @@ export function redeemBotAuthKey(
     WHERE auth_key = ?
   `).run(chatId, Date.now(), row.auth_key);
 
+  // CAMBIO DI PARADIGMA: associa automaticamente all'iscritto Telegram la via, le coordinate e il raggio inseriti dall'amministratore
+  upsertTelegramSubscriber({
+    chat_id: chatId,
+    auth_key: row.auth_key,
+    is_authenticated: 1,
+    is_active: 1,
+    address: row.address || row.business_name || 'Torino',
+    latitude: row.latitude,
+    longitude: row.longitude,
+    alert_radius_meters: row.alert_radius_meters || 150,
+  });
+
   return {
     success: true,
     business_name: row.business_name || row.description || 'Attività registrata',
+    address: row.address,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    alert_radius_meters: row.alert_radius_meters || 150,
   };
 }
 
-// Crea una nuova chiave monouso per un'attività
-export function createBotAuthKey(businessName: string, createdBy: string = 'admin'): BotAuthKey {
+// Crea una nuova chiave monouso per un'attività con indirizzo e coordinate geocodificate dall'amministratore
+export function createBotAuthKey(
+  input: string | {
+    businessName: string;
+    address?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    alertRadiusMeters?: number;
+    createdBy?: string;
+  },
+  fallbackCreatedBy: string = 'admin'
+): BotAuthKey {
   const db = getDb();
   const newKey = generateBotApiKey();
+
+  let businessName = '';
+  let address: string | null = null;
+  let latitude: number | null = null;
+  let longitude: number | null = null;
+  let alertRadiusMeters = 150;
+  let createdBy = fallbackCreatedBy;
+
+  if (typeof input === 'string') {
+    businessName = input.trim();
+  } else {
+    businessName = input.businessName.trim();
+    address = input.address ? input.address.trim() : null;
+    latitude = input.latitude ?? null;
+    longitude = input.longitude ?? null;
+    alertRadiusMeters = input.alertRadiusMeters || 150;
+    createdBy = input.createdBy || fallbackCreatedBy;
+  }
+
   db.prepare(`
-    INSERT INTO bot_auth_keys (auth_key, business_name, description, is_active, is_used, created_by)
-    VALUES (?, ?, ?, 1, 0, ?)
-  `).run(newKey, businessName.trim(), `Chiave per ${businessName.trim()}`, createdBy);
+    INSERT INTO bot_auth_keys (
+      auth_key, business_name, description, address, latitude, longitude, alert_radius_meters, is_active, is_used, created_by
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?)
+  `).run(
+    newKey,
+    businessName,
+    `Chiave per ${businessName}`,
+    address,
+    latitude,
+    longitude,
+    alertRadiusMeters,
+    createdBy
+  );
 
   return db.prepare('SELECT * FROM bot_auth_keys WHERE auth_key = ?').get(newKey) as BotAuthKey;
 }

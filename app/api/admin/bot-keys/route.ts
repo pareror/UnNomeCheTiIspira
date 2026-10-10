@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getCurrentAdminUser } from '@/lib/auth-server';
 import { listBotAuthKeys, createBotAuthKey, revokeBotAuthKey, getSubscriberStats } from '@/lib/db';
+import { geocodeAddressTurin } from '@/lib/geo';
 
 export async function GET() {
   const admin = await getCurrentAdminUser();
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { business_name } = body;
+    const { business_name, address, alert_radius_meters } = body;
 
     if (!business_name || typeof business_name !== 'string' || business_name.trim().length === 0) {
       return NextResponse.json(
@@ -35,12 +36,34 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const newKey = createBotAuthKey(business_name.trim(), admin.username);
+    if (!address || typeof address !== 'string' || address.trim().length === 0) {
+      return NextResponse.json(
+        { error: 'Indirizzo della sede torinese obbligatorio (es. Via Po 14, Piazza Santa Giulia 2...)' },
+        { status: 400 }
+      );
+    }
+
+    const radius = Number(alert_radius_meters) || 150;
+
+    // Geocodifica automatica della via e civico a Torino
+    const geocoded = await geocodeAddressTurin(address.trim());
+    const finalAddress = geocoded?.formattedAddress || `${address.trim()}, Torino`;
+    const lat = geocoded?.latitude ?? null;
+    const lon = geocoded?.longitude ?? null;
+
+    const newKey = createBotAuthKey({
+      businessName: business_name.trim(),
+      address: finalAddress,
+      latitude: lat,
+      longitude: lon,
+      alertRadiusMeters: radius,
+      createdBy: admin.username,
+    });
 
     return NextResponse.json({
       success: true,
       key: newKey,
-      message: `Chiave monouso generata con successo per ${business_name.trim()}.`,
+      message: `Chiave monouso generata con successo per ${business_name.trim()} con sede a ${finalAddress}.`,
     });
   } catch (err: any) {
     console.error('[API /admin/bot-keys POST] Errore:', err);

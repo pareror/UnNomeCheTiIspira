@@ -21,11 +21,10 @@ Guida sintetica ai comandi essenziali per l'esecuzione del progetto e l'interazi
 | Comando / Input | Descrizione Breve |
 |---|---|
 | `/start` | Avvia l'interazione con il bot e richiede l'autenticazione. |
-| `/login <chiave>` | Attiva la **chiave monouso** rilasciata dall'amministratore (es: `TN-9A4B-7C2E-1D8F`). |
-| `Via Po 14` *(o qualsiasi via + civico)* | Geolocalizza la sede della tua attività a Torino tramite OpenStreetMap. |
+| `/login <chiave>` | Attiva la **chiave monouso** rilasciata dall'amministratore (es: `TN-9A4B-7C2E-1D8F`). La sede e le coordinate vengono associate all'istante! |
+| `/stazioni` | Elenca le celle acustiche attive entro il raggio della tua sede con la distanza esatta in metri. |
 | `/raggio <metri>` | Modifica il raggio di controllo attorno alla tua attività (default: `150m`). |
-| `/stazioni` | Elenca le celle acustiche attive entro il tuo raggio con la distanza esatta in metri. |
-| `/stato` | Mostra sede, coordinate, raggio, soglia (70 dB) e timer anti-spam. |
+| `/stato` | Mostra attività, sede certificata dall'amministrazione, coordinate, raggio, soglia (70 dB) e anti-spam. |
 | `/test_allerta` | Invia una notifica di prova per verificare che la chat riceva correttamente. |
 | `/aiuto` | Mostra il riepilogo dei comandi all'interno di Telegram. |
 
@@ -35,14 +34,15 @@ Guida sintetica ai comandi essenziali per l'esecuzione del progetto e l'interazi
 
 - **URL:** `http://localhost:3000/admin` (Login: `admin` / credenziale in `.env.local`).
 - **Funzionalità Amministrazione:**
-  - **Generazione Chiavi Bot Telegram:** Creazione chiavi strettamente monouso per ciascuna attività e revoca in tempo reale.
+  - **Generazione Chiavi con Sede Certificata:** L'amministratore inserisce il nome del locale e la via con numero civico a Torino (es. `Via Santa Giulia 12, Torino`). L'indirizzo viene geocodificato e salvato all'istante, evitando qualsiasi errore di sintassi da parte dell'utente.
+  - **Monouso Rigoroso & Revoca:** Ogni chiave può essere riscattata una sola volta e può essere revocata in tempo reale con disconnessione immediata della chat Telegram collegata.
   - **Gestione Utenze Amministrative (RBAC):** Creazione operatori e revoca utenze (gli operatori non possono revocare altre utenze né il Superadmin).
 
 ---
 
 ## 🛡️ Regole Chiave del Sistema
 
-1. **Chiavi Monouso per Attività:** ogni chiave generata da `/admin` può essere usata una sola volta per associare un'utenza Telegram.
+1. **Sede Pre-registrata dall'Amministrazione:** l'esercente non deve inserire la via su Telegram; la sede viene registrata e validata dall'admin al rilascio della chiave monouso.
 2. **Soglia di Allarme:** le notifiche scattano se il livello sonoro rilevato è **≥ 70 dB**.
 3. **Anti-Spam 10 Minuti:** tra un avviso e l'altro per la stessa attività intercorrono almeno **10 minuti**.
 4. **Validità Temporale (Max 2 Minuti):** vengono notificati solo eventi accaduti negli ultimi **120 secondi**, evitando falsi allarmi su dati storici o vecchi al riavvio del server.

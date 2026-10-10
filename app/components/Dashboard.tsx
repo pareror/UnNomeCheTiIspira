@@ -305,6 +305,27 @@ export default function Dashboard() {
           >
             <span>🤖 Bot Telegram (@NoiseTurin_bot)</span>
           </button>
+
+          <a
+            href="/admin"
+            id="header-admin-portal-button"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: '#1e293b',
+              color: '#38bdf8',
+              border: '1px solid #0284c7',
+              borderRadius: '5px',
+              fontSize: '12px',
+              textDecoration: 'none',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+            title="Accesso riservato amministratori: genera chiavi monouso e gestisci operatori"
+          >
+            <span>🛡️ Portale Admin</span>
+          </a>
         </div>
       </header>
 
@@ -695,11 +716,14 @@ httpClient.addHeader("x-api-key", "arduino-torino-noise-secret-2026");`}
 
               <h4 style={{ margin: '12px 0 6px 0', color: '#0f172a' }}>1. Avvio del Bot e Autenticazione</h4>
               <p style={{ margin: 0 }}>
-                Cerca <b>@NoiseTurin_bot</b> su Telegram oppure apri il link <a href="https://t.me/NoiseTurin_bot" target="_blank" rel="noreferrer" style={{ color: '#0284c7', fontWeight: 600 }}>t.me/NoiseTurin_bot</a>. Premi <code>/start</code> e inserisci la chiave di autorizzazione univoca:
+                Cerca <b>@NoiseTurin_bot</b> su Telegram oppure apri il link <a href="https://t.me/NoiseTurin_bot" target="_blank" rel="noreferrer" style={{ color: '#0284c7', fontWeight: 600 }}>t.me/NoiseTurin_bot</a>. Premi <code>/start</code> e inserisci la tua <b>chiave monouso</b> rilasciata dall&apos;amministrazione comunale:
               </p>
-              <pre style={{ backgroundColor: '#1e293b', color: '#38bdf8', padding: '8px 12px', borderRadius: '6px', margin: '8px 0', fontSize: '12px', fontWeight: 600 }}>
-                TORINO-ALERT-KEY-2026
-              </pre>
+              <div style={{ backgroundColor: '#1e293b', color: '#38bdf8', padding: '10px 14px', borderRadius: '6px', margin: '8px 0', fontSize: '12px' }}>
+                <span style={{ color: '#94a3b8' }}>Formato chiave monouso:</span> <code style={{ color: '#38bdf8', fontWeight: 700 }}>TN-XXXX-XXXX-XXXX</code>
+                <div style={{ fontSize: '11px', color: '#cbd5e1', marginTop: '4px' }}>
+                  Ogni attività riceve una chiave strettamente monouso generata dall&apos;amministratore nel <a href="/admin" target="_blank" style={{ color: '#38bdf8', textDecoration: 'underline' }}>Pannello Amministrazione</a>.
+                </div>
+              </div>
 
               <h4 style={{ margin: '14px 0 6px 0', color: '#0f172a' }}>2. Registrazione Indirizzo Sede / Esercizio</h4>
               <p style={{ margin: 0 }}>

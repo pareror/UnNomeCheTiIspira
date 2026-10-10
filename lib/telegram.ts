@@ -12,6 +12,7 @@ import {
   upsertTelegramSubscriber,
   setSubscriberActive,
   verifyBotAuthKey,
+  redeemBotAuthKey,
   getAllStations,
   insertNoiseAlert,
   TelegramSubscriber,
@@ -335,19 +336,21 @@ export async function handleSubscriberUpdate(update: any): Promise<void> {
     const possibleKey = rawText.split(/\s+/)[1];
 
     if (possibleKey) {
-      if (verifyBotAuthKey(possibleKey)) {
+      const redeem = redeemBotAuthKey(possibleKey, chatIdStr);
+      if (redeem.success) {
         upsertTelegramSubscriber({
           chat_id: chatIdStr,
           username,
           first_name: firstName,
-          auth_key: possibleKey,
+          auth_key: possibleKey.trim(),
           is_authenticated: 1,
           is_active: 1,
         });
         await sendTelegramMessage(
           chatIdStr,
           `✅ <b>Autenticazione riuscita con successo!</b>\n\n` +
-            `Chiave attivata: <code>${possibleKey}</code>\n\n` +
+            `🏢 <b>Attività:</b> ${redeem.business_name || 'Attività registrata'}\n` +
+            `🔑 <i>Chiave monouso attivata e vincolata a questo profilo.</i>\n\n` +
             `📍 <b>Ora imposta la sede della tua attività a Torino:</b>\n` +
             `Invia semplicemente la <b>via e il numero civico</b> (es: <code>Via Po 14</code> oppure <code>Via Roma 10</code>):`
         );
@@ -355,7 +358,8 @@ export async function handleSubscriberUpdate(update: any): Promise<void> {
       }
       await sendTelegramMessage(
         chatIdStr,
-        `❌ <b>Chiave non valida o non attiva.</b>\nVerifica il codice univoco fornito o usa /login per riprovare.`
+        `❌ <b>Autenticazione non riuscita:</b>\n${redeem.error || 'Chiave non valida o già utilizzata.'}\n\n` +
+          `Richiedi una nuova chiave monouso all'amministratore del servizio.`
       );
       return;
     }
@@ -385,7 +389,7 @@ export async function handleSubscriberUpdate(update: any): Promise<void> {
       `👋 <b>Benvenuto nel Sistema Allerte Acustiche Torino Noise!</b>\n\n` +
         `Questo bot monitora le emissioni sonore urbane attorno alla tua attività e ti invia avvisi istantanei se il rumore supera i livelli consentiti.\n\n` +
         `🔐 <b>Autenticazione Richiesta:</b>\n` +
-        `Per procedere, invia la tua <b>chiave di accesso univoca</b> (es: <code>TORINO-ALERT-KEY-2026</code> oppure usa <code>/login CHIAVE</code>):`
+        `Per procedere, invia la tua <b>chiave di accesso monouso</b> rilasciata dall'amministrazione per la tua attività (es: <code>/login TN-XXXX-XXXX</code> oppure digita direttamente il codice):`
     );
     return;
   }
@@ -413,23 +417,25 @@ export async function handleSubscriberUpdate(update: any): Promise<void> {
     }
 
     if (!keyToTest) {
-      await sendTelegramMessage(chatIdStr, `⚠️ Inserisci la chiave univoca. Esempio:\n<code>/login TORINO-ALERT-KEY-2026</code>`);
+      await sendTelegramMessage(chatIdStr, `⚠️ Inserisci la chiave monouso fornita dall'amministratore. Esempio:\n<code>/login TN-XXXX-XXXX</code>`);
       return;
     }
 
-    if (verifyBotAuthKey(keyToTest)) {
+    const redeem = redeemBotAuthKey(keyToTest, chatIdStr);
+    if (redeem.success) {
       upsertTelegramSubscriber({
         chat_id: chatIdStr,
         username,
         first_name: firstName,
-        auth_key: keyToTest,
+        auth_key: keyToTest.trim(),
         is_authenticated: 1,
         is_active: 1,
       });
       await sendTelegramMessage(
         chatIdStr,
         `✅ <b>Autenticazione riuscita!</b>\n\n` +
-          `🔑 Chiave registrata: <code>${keyToTest}</code>\n\n` +
+          `🏢 <b>Attività:</b> ${redeem.business_name || 'Attività registrata'}\n` +
+          `🔑 <i>Chiave attivata e vincolata a questo profilo.</i>\n\n` +
           `📍 <b>Inserisci la via e numero civico della tua attività a Torino:</b>\n` +
           `<i>(Esempio: <code>Via Po 14</code> oppure <code>Via Roma 10</code>)</i>`
       );
@@ -438,8 +444,8 @@ export async function handleSubscriberUpdate(update: any): Promise<void> {
 
     await sendTelegramMessage(
       chatIdStr,
-      `❌ <b>Chiave non valida o inesistente.</b>\n` +
-        `Assicurati di inserire la chiave univoca corretta (es: <code>TORINO-ALERT-KEY-2026</code>).`
+      `❌ <b>Autenticazione non riuscita:</b>\n${redeem.error || 'Chiave non valida o già utilizzata.'}\n\n` +
+        `Assicurati di inserire la chiave monouso fornita dall'amministratore.`
     );
     return;
   }

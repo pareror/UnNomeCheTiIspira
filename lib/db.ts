@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import { hashPassword, generateBotApiKey } from './crypto-auth';
 
 // Singleton del database
 let dbInstance: Database.Database | null = null;
@@ -81,9 +82,27 @@ function initializeDatabase(db: Database.Database) {
 
     CREATE TABLE IF NOT EXISTS bot_auth_keys (
       auth_key TEXT PRIMARY KEY,
+      business_name TEXT,
       description TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
+      is_used INTEGER NOT NULL DEFAULT 0,
+      used_by_chat_id TEXT,
+      used_at INTEGER,
+      created_by TEXT,
+      revoked_at INTEGER,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'operator', -- 'superadmin' | 'operator'
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_login_at INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS telegram_subscribers (
@@ -105,17 +124,45 @@ function initializeDatabase(db: Database.Database) {
     );
   `);
 
-  // Seeding chiavi autorizzazione per il bot Telegram
+  // Migrazioni colonne bot_auth_keys per supporto chiavi monouso
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN business_name TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN is_used INTEGER NOT NULL DEFAULT 0;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN used_by_chat_id TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN used_at INTEGER;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN created_by TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN revoked_at INTEGER;`); } catch {}
+
+  // Revoca permanente di tutte le chiavi di test fittizie e disattivazione account associati
   try {
-    const keyCount = db.prepare('SELECT count(*) as count FROM bot_auth_keys').get() as { count: number };
-    if (keyCount.count === 0) {
-      const insertKey = db.prepare('INSERT OR IGNORE INTO bot_auth_keys (auth_key, description) VALUES (?, ?)');
-      insertKey.run('TORINO-ALERT-KEY-2026', 'Master Key Torino Allerte 2026');
-      insertKey.run('BAR-SAN-SALVARIO-01', 'Esercente San Salvario');
-      insertKey.run('COMMERCIO-VIA-PO-14', 'Esercente Via Po');
+    db.exec(`
+      UPDATE bot_auth_keys 
+      SET is_active = 0, revoked_at = strftime('%s','now')*1000 
+      WHERE auth_key IN ('TORINO-ALERT-KEY-2026', 'BAR-SAN-SALVARIO-01', 'COMMERCIO-VIA-PO-14');
+      
+      UPDATE telegram_subscribers 
+      SET is_authenticated = 0, is_active = 0, auth_key = NULL 
+      WHERE auth_key IN ('TORINO-ALERT-KEY-2026', 'BAR-SAN-SALVARIO-01', 'COMMERCIO-VIA-PO-14')
+         OR auth_key IS NULL;
+    `);
+  } catch (err) {
+    console.warn('[DB] Revoca chiavi di test:', err);
+  }
+
+  // Inizializzazione Superadmin iniziale se tabella vuota
+  try {
+    const adminCount = db.prepare('SELECT count(*) as count FROM admin_users').get() as { count: number };
+    if (adminCount.count === 0) {
+      const initialUser = process.env.INITIAL_SUPERADMIN_USER || 'admin';
+      const initialPass = process.env.INITIAL_SUPERADMIN_PASSWORD || 'AdminTorino2026!';
+      const { hash, salt } = hashPassword(initialPass);
+      db.prepare(`
+        INSERT INTO admin_users (username, password_hash, salt, role, is_active, created_by)
+        VALUES (?, ?, ?, 'superadmin', 1, 'system')
+      `).run(initialUser, hash, salt);
+      console.log(`[DB] Account Superadmin creato: ${initialUser}`);
     }
   } catch (err) {
-    console.warn('[DB] Inizializzazione chiavi bot:', err);
+    console.warn('[DB] Inizializzazione Superadmin:', err);
   }
 
   // Migrazione retrocompatibile per colonna is_dummy se tabella preesistente
@@ -605,16 +652,116 @@ export interface TelegramSubscriber {
 
 export interface BotAuthKey {
   auth_key: string;
+  business_name: string | null;
   description: string | null;
   is_active: number;
+  is_used: number;
+  used_by_chat_id: string | null;
+  used_at: number | null;
+  created_by: string | null;
+  revoked_at: number | null;
   created_at: string;
 }
 
-// Verifica se una chiave di autorizzazione del Bot è valida e attiva
+export interface AdminUser {
+  id: number;
+  username: string;
+  password_hash: string;
+  salt: string;
+  role: 'superadmin' | 'operator';
+  is_active: number;
+  created_by: string | null;
+  created_at: string;
+  last_login_at: number | null;
+}
+
+// Verifica se una chiave di autorizzazione del Bot è valida, attiva e non ancora utilizzata
 export function verifyBotAuthKey(key: string): boolean {
   const db = getDb();
-  const row = db.prepare('SELECT auth_key FROM bot_auth_keys WHERE auth_key = ? AND is_active = 1').get(key.trim());
+  const row = db.prepare('SELECT auth_key FROM bot_auth_keys WHERE auth_key = ? AND is_active = 1 AND is_used = 0').get(key.trim());
   return Boolean(row);
+}
+
+// Riscatta una chiave monouso per conto di una chat Telegram
+export function redeemBotAuthKey(
+  key: string,
+  chatId: string
+): { success: boolean; error?: string; business_name?: string } {
+  const db = getDb();
+  const cleanKey = key.trim();
+  const row = db
+    .prepare('SELECT * FROM bot_auth_keys WHERE auth_key = ?')
+    .get(cleanKey) as BotAuthKey | undefined;
+
+  if (!row || row.is_active !== 1) {
+    return {
+      success: false,
+      error: 'Chiave non valida o revocata dall\'amministrazione.',
+    };
+  }
+
+  if (row.is_used === 1) {
+    if (row.used_by_chat_id === chatId) {
+      return {
+        success: true,
+        business_name: row.business_name || row.description || 'Attività registrata',
+      };
+    }
+    return {
+      success: false,
+      error: 'Questa chiave è già stata utilizzata da un\'altra utenza. Ogni chiave è strettamente monouso.',
+    };
+  }
+
+  // Riscatto completato: segna la chiave come usata dalla chat
+  db.prepare(`
+    UPDATE bot_auth_keys 
+    SET is_used = 1, used_by_chat_id = ?, used_at = ? 
+    WHERE auth_key = ?
+  `).run(chatId, Date.now(), row.auth_key);
+
+  return {
+    success: true,
+    business_name: row.business_name || row.description || 'Attività registrata',
+  };
+}
+
+// Crea una nuova chiave monouso per un'attività
+export function createBotAuthKey(businessName: string, createdBy: string = 'admin'): BotAuthKey {
+  const db = getDb();
+  const newKey = generateBotApiKey();
+  db.prepare(`
+    INSERT INTO bot_auth_keys (auth_key, business_name, description, is_active, is_used, created_by)
+    VALUES (?, ?, ?, 1, 0, ?)
+  `).run(newKey, businessName.trim(), `Chiave per ${businessName.trim()}`, createdBy);
+
+  return db.prepare('SELECT * FROM bot_auth_keys WHERE auth_key = ?').get(newKey) as BotAuthKey;
+}
+
+// Revoca una chiave monouso e disattiva contestualmente l'accesso alla chat che la usava
+export function revokeBotAuthKey(key: string): boolean {
+  const db = getDb();
+  const cleanKey = key.trim();
+  const res = db.prepare(`
+    UPDATE bot_auth_keys 
+    SET is_active = 0, revoked_at = ? 
+    WHERE auth_key = ?
+  `).run(Date.now(), cleanKey);
+
+  // Revoca immediata all'utenza Telegram collegata
+  db.prepare(`
+    UPDATE telegram_subscribers 
+    SET is_authenticated = 0, is_active = 0 
+    WHERE auth_key = ?
+  `).run(cleanKey);
+
+  return res.changes > 0;
+}
+
+// Elenco di tutte le chiavi autorizzazione
+export function listBotAuthKeys(): BotAuthKey[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM bot_auth_keys ORDER BY created_at DESC').all() as BotAuthKey[];
 }
 
 // Crea o aggiorna un iscritto al Bot Telegram
@@ -740,3 +887,90 @@ export function updateSubscriberLastAlert(chat_id: string, timestamp: number = D
   const db = getDb();
   db.prepare('UPDATE telegram_subscribers SET last_alert_at = ? WHERE chat_id = ?').run(timestamp, chat_id);
 }
+
+// ==========================================
+// GESTIONE UTENTI AMMINISTRATIVI (RBAC)
+// ==========================================
+
+export function getAdminUserByUsername(username: string): AdminUser | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM admin_users WHERE username = ? AND is_active = 1').get(username.trim()) as AdminUser | undefined;
+}
+
+export function getAdminUserById(id: number): AdminUser | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM admin_users WHERE id = ? AND is_active = 1').get(id) as AdminUser | undefined;
+}
+
+export function listAdminUsers(): Omit<AdminUser, 'password_hash' | 'salt'>[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT id, username, role, is_active, created_by, created_at, last_login_at 
+    FROM admin_users 
+    ORDER BY id ASC
+  `).all() as Omit<AdminUser, 'password_hash' | 'salt'>[];
+}
+
+export function createAdminUser(
+  username: string,
+  passwordHash: string,
+  salt: string,
+  role: 'superadmin' | 'operator',
+  createdBy: string
+): Omit<AdminUser, 'password_hash' | 'salt'> {
+  const db = getDb();
+  const result = db.prepare(`
+    INSERT INTO admin_users (username, password_hash, salt, role, is_active, created_by)
+    VALUES (?, ?, ?, ?, 1, ?)
+  `).run(username.trim(), passwordHash, salt, role, createdBy);
+
+  return db.prepare(`
+    SELECT id, username, role, is_active, created_by, created_at, last_login_at 
+    FROM admin_users WHERE id = ?
+  `).get(result.lastInsertRowid) as Omit<AdminUser, 'password_hash' | 'salt'>;
+}
+
+export function deactivateAdminUser(
+  targetUserId: number,
+  requestingUser: { id: number; role: 'superadmin' | 'operator' }
+): { success: boolean; error?: string } {
+  const db = getDb();
+
+  // Regola di sicurezza: solo un superadmin può revocare le utenze
+  if (requestingUser.role !== 'superadmin') {
+    return {
+      success: false,
+      error: 'Operazione non consentita: solo l\'amministratore principale può revocare le utenze.',
+    };
+  }
+
+  // Non ci si può auto-revocare
+  if (requestingUser.id === targetUserId) {
+    return {
+      success: false,
+      error: 'Non puoi revocare la tua stessa utenza amministratore in sessione.',
+    };
+  }
+
+  const target = db.prepare('SELECT * FROM admin_users WHERE id = ?').get(targetUserId) as AdminUser | undefined;
+  if (!target) {
+    return { success: false, error: 'Utenza non trovata.' };
+  }
+
+  // Non è MAI possibile revocare un superadmin
+  if (target.role === 'superadmin') {
+    return {
+      success: false,
+      error: 'Impossibile revocare l\'utenza di un amministratore principale (superadmin).',
+    };
+  }
+
+  db.prepare('UPDATE admin_users SET is_active = 0 WHERE id = ?').run(targetUserId);
+  return { success: true };
+}
+
+export function updateAdminLastLogin(id: number): void {
+  const db = getDb();
+  db.prepare('UPDATE admin_users SET last_login_at = ? WHERE id = ?').run(Date.now(), id);
+}
+

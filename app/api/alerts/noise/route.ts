@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { 
   verifySensorApiKey, 
+  verifyAdminApiKey,
   applySecurityHeaders, 
   checkRateLimit 
 } from '@/lib/security';
@@ -34,10 +35,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 2. Protezione di Sicurezza: Autenticazione API Key (x-api-key, Bearer o body)
-  const providedKey = request.headers.get('x-api-key') || rawBody?.api_key || '';
-  const isAcceptedDevKey = providedKey === 'dev-sensor-secret-key-2026';
-  if (!verifySensorApiKey(request, rawBody?.api_key) && !isAcceptedDevKey) {
+  // 2. Protezione di Sicurezza: Autenticazione API Key da variabili d'ambiente (SENSOR_API_KEY o ADMIN_API_KEY)
+  const isAuthorized = verifySensorApiKey(request, rawBody?.api_key) || verifyAdminApiKey(request);
+  if (!isAuthorized) {
     return applySecurityHeaders(
       NextResponse.json(
         { 

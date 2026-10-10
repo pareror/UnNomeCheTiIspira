@@ -11,13 +11,39 @@
 
 import Database from 'better-sqlite3';
 import path from 'path';
+import fs from 'fs';
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8953155660:AAGi6tbaqxQOEmVEGAvpaw1ma70UeIJaUro';
+// Caricamento sicuro delle credenziali da file .env.local o .env
+if (fs.existsSync('.env.local')) {
+  process.loadEnvFile?.('.env.local');
+} else if (fs.existsSync('.env')) {
+  process.loadEnvFile?.('.env');
+}
+
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+if (!BOT_TOKEN) {
+  console.error('❌ ERRORE CRITICO: TELEGRAM_BOT_TOKEN non configurato nel file .env.local o .env!');
+  process.exit(1);
+}
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-const dbPath = path.join(process.cwd(), 'noise_monitor.db');
+const dbPath = process.env.DATABASE_PATH || path.join(process.cwd(), 'noise_monitor.db');
 const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
+
+// Revoca immediata di tutte le vecchie chiavi fittizie di test
+try {
+  db.exec(`
+    UPDATE bot_auth_keys 
+    SET is_active = 0, revoked_at = strftime('%s','now')*1000 
+    WHERE auth_key IN ('TORINO-ALERT-KEY-2026', 'BAR-SAN-SALVARIO-01', 'COMMERCIO-VIA-PO-14');
+    
+    UPDATE telegram_subscribers 
+    SET is_authenticated = 0, is_active = 0, auth_key = NULL 
+    WHERE auth_key IN ('TORINO-ALERT-KEY-2026', 'BAR-SAN-SALVARIO-01', 'COMMERCIO-VIA-PO-14')
+       OR auth_key IS NULL;
+  `);
+} catch (e) {}
 
 // -------------------------------------------------------------
 // FUNZIONI GEODETICHE ED EURISTICHE (TORINO)
@@ -109,9 +135,39 @@ function getSubscriber(chatId) {
   return db.prepare('SELECT * FROM telegram_subscribers WHERE chat_id = ?').get(String(chatId));
 }
 
-function verifyAuthKey(key) {
-  const row = db.prepare('SELECT auth_key FROM bot_auth_keys WHERE auth_key = ? AND is_active = 1').get(key.trim());
-  return Boolean(row);
+function redeemAuthKey(key, chatId) {
+  const cleanKey = (key || '').trim();
+  const row = db.prepare('SELECT * FROM bot_auth_keys WHERE auth_key = ?').get(cleanKey);
+  if (!row || row.is_active !== 1) {
+    return {
+      success: false,
+      error: 'Chiave non valida o revocata dall\'amministrazione.',
+    };
+  }
+  if (row.is_used === 1) {
+    if (row.used_by_chat_id === String(chatId)) {
+      return {
+        success: true,
+        businessName: row.business_name || row.description || 'Attività registrata',
+      };
+    }
+    return {
+      success: false,
+      error: 'Questa chiave è già stata utilizzata da un\'altra utenza. Ogni chiave è strettamente monouso.',
+    };
+  }
+
+  // Riscatto effettuato con successo: marca la chiave come usata
+  db.prepare(`
+    UPDATE bot_auth_keys 
+    SET is_used = 1, used_by_chat_id = ?, used_at = ? 
+    WHERE auth_key = ?
+  `).run(String(chatId), Date.now(), row.auth_key);
+
+  return {
+    success: true,
+    businessName: row.business_name || row.description || 'Attività registrata',
+  };
 }
 
 function upsertSubscriber(data) {
@@ -212,18 +268,20 @@ async function handleIncomingMessage(msg) {
     const possibleKey = parts[1];
 
     if (possibleKey) {
-      if (verifyAuthKey(possibleKey)) {
+      const redeem = redeemAuthKey(possibleKey, chatId);
+      if (redeem.success) {
         upsertSubscriber({
           chat_id: chatId,
           username,
           first_name: firstName,
-          auth_key: possibleKey,
+          auth_key: possibleKey.trim(),
           is_authenticated: 1,
         });
         await sendMessage(
           chatId,
           `✅ <b>Autenticazione riuscita con successo!</b>\n\n` +
-          `Chiave attivata: <code>${possibleKey}</code>\n\n` +
+          `🏢 <b>Attività:</b> ${redeem.businessName}\n` +
+          `🔑 <i>Chiave monouso attivata e vincolata a questo profilo.</i>\n\n` +
           `📍 <b>Ora imposta la sede della tua attività a Torino:</b>\n` +
           `Invia semplicemente la <b>via e il numero civico</b> (es: <code>Via Po 14</code> oppure <code>Via Roma 10</code>):`
         );
@@ -231,7 +289,8 @@ async function handleIncomingMessage(msg) {
       } else {
         await sendMessage(
           chatId,
-          `❌ <b>Chiave non valida o non attiva.</b>\nVerifica il codice univoco fornito o usa /login per riprovare.`
+          `❌ <b>Autenticazione non riuscita:</b>\n${redeem.error || 'Chiave non valida o revocata.'}\n\n` +
+          `Richiedi una nuova chiave monouso all'amministratore del servizio.`
         );
         return;
       }
@@ -259,7 +318,7 @@ async function handleIncomingMessage(msg) {
         `👋 <b>Benvenuto nel Sistema Allerte Acustiche Torino Noise!</b>\n\n` +
         `Questo bot monitora le emissioni sonore urbane attorno alla tua attività e ti invia avvisi istantanei se il rumore supera i livelli consentiti.\n\n` +
         `🔐 <b>Autenticazione Richiesta:</b>\n` +
-        `Per procedere, invia la tua <b>chiave di accesso univoca</b> (es: <code>TORINO-ALERT-KEY-2026</code> oppure usa <code>/login CHIAVE</code>):`
+        `Per procedere, invia la <b>chiave di accesso monouso</b> rilasciata dall'amministrazione per la tua attività (es: <code>/login CHIAVE</code> oppure invia direttamente il codice):`
       );
     }
     return;
@@ -274,22 +333,24 @@ async function handleIncomingMessage(msg) {
     }
 
     if (!keyToTest) {
-      await sendMessage(chatId, `⚠️ Inserisci la chiave univoca. Esempio:\n<code>/login TORINO-ALERT-KEY-2026</code>`);
+      await sendMessage(chatId, `⚠️ Inserisci la chiave univoca rilasciata dall'amministratore. Esempio:\n<code>/login TN-XXXX-XXXX</code>`);
       return;
     }
 
-    if (verifyAuthKey(keyToTest)) {
+    const redeem = redeemAuthKey(keyToTest, chatId);
+    if (redeem.success) {
       upsertSubscriber({
         chat_id: chatId,
         username,
         first_name: firstName,
-        auth_key: keyToTest,
+        auth_key: keyToTest.trim(),
         is_authenticated: 1,
       });
       await sendMessage(
         chatId,
         `✅ <b>Autenticazione riuscita!</b>\n\n` +
-        `🔑 Chiave registrata: <code>${keyToTest}</code>\n\n` +
+        `🏢 <b>Attività:</b> ${redeem.businessName}\n` +
+        `🔑 <i>Chiave monouso attivata e vincolata a questo profilo.</i>\n\n` +
         `📍 <b>Inserisci la via e numero civico della tua attività a Torino:</b>\n` +
         `<i>(Esempio: <code>Via Po 14</code> oppure <code>Via Roma 10</code>)</i>`
       );
@@ -297,8 +358,8 @@ async function handleIncomingMessage(msg) {
     } else {
       await sendMessage(
         chatId,
-        `❌ <b>Chiave non valida o inesistente.</b>\n` +
-        `Assicurati di inserire la chiave univoca corretta (es: <code>TORINO-ALERT-KEY-2026</code>).`
+        `❌ <b>Autenticazione non riuscita:</b>\n${redeem.error || 'Chiave non valida o già utilizzata.'}\n\n` +
+        `Assicurati di inserire la chiave monouso fornita dall'amministratore.`
       );
       return;
     }

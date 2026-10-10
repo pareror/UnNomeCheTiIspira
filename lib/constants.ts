@@ -6,10 +6,9 @@ export const NOISE_RADIUS_METERS = 15;
 // Raggio di allerta predefinito per le attività/utenti (parametrizzato e modificabile per utente, default 150 metri)
 export const DEFAULT_ALERT_RADIUS_METERS = 150;
 
-// Configurazione Bot Telegram per allerte acustiche
-export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '8953155660:AAGi6tbaqxQOEmVEGAvpaw1ma70UeIJaUro';
-export const TELEGRAM_BOT_USERNAME = 'NoiseTurin_bot';
-export const DEFAULT_BOT_MASTER_KEY = 'TORINO-ALERT-KEY-2026';
+// Configurazione Bot Telegram per allerte acustiche (caricata da variabili d'ambiente)
+export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+export const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'NoiseTurin_bot';
 
 // Coordinate centrali della città di Torino e livello di zoom consigliato
 export const TURIN_CENTER: [number, number] = [45.0683, 7.6830]; // [lat, lng]

@@ -51,6 +51,10 @@ export const NOISE_ALERT_QUIET_GRACE_MS = 60 * 1000;
 // Intervallo minimo tra due allerte per la stessa violazione (anti-spam): 10 minuti
 export const NOISE_ALERT_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000;
 
+// Finestra temporale massima di validità dell'evento sonoro (2 minuti):
+// Previene l'invio di allerte su dati storici o vecchi elaborati all'avvio del server
+export const MAX_ALERT_EVENT_AGE_MS = 2 * 60 * 1000;
+
 // Raggio attorno alla stazione entro cui gli esercenti sono considerati "limitrofi" e allertati
 export const COMPANY_ALERT_RADIUS_METERS = 200;
 

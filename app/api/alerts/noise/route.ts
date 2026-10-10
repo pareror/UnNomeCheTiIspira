@@ -15,6 +15,7 @@ const AlertPayloadSchema = z.object({
   station_id: z.string().min(2, 'station_id obbligatorio'),
   sound_intensity: z.number().int().min(0).max(1023),
   threshold: z.number().default(NOISE_ALERT_THRESHOLD_DB),
+  timestamp: z.number().int().positive().optional(),
   message: z.string().max(300).optional(),
   api_key: z.string().optional(),
 });
@@ -91,7 +92,27 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 6. Recupera le coordinate della stazione acustica dal database
+  // 6. Verifica Freschezza Temporale (max 2 minuti dall'evento acustico)
+  // Evita l'invio di allerte su dati vecchi o storici elaborati all'avvio del server
+  const now = Date.now();
+  const eventTime = validation.data.timestamp ?? now;
+  const maxAgeMs = 2 * 60 * 1000; // 2 minuti
+
+  if (Math.abs(now - eventTime) > maxAgeMs) {
+    return applySecurityHeaders(
+      NextResponse.json({
+        success: true,
+        alert_triggered: false,
+        message: `Rilevamento acustico ignorato: risale a oltre 2 minuti fa (${Math.round((now - eventTime) / 1000)}s fa). Nessun avviso inviato per evitare notifiche su dati vecchi o storici.`,
+        sound_intensity,
+        threshold,
+        event_timestamp: eventTime,
+        server_timestamp: now,
+      })
+    );
+  }
+
+  // 7. Recupera le coordinate della stazione acustica dal database
   const db = getDb();
   const station = db.prepare('SELECT id, name, latitude, longitude FROM stations WHERE id = ?').get(station_id) as {
     id: string;
@@ -109,11 +130,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 7. Dispatch delle allerte Telegram agli utenti la cui attività è entro il loro raggio (default 150m)
+  // 8. Dispatch delle allerte Telegram agli utenti la cui attività è entro il loro raggio (default 150m)
   try {
     const alertResult = await dispatchNoiseAlertToSubscribers({
       station,
       soundIntensity: sound_intensity,
+      timestamp: eventTime,
       customMessage: message,
     });
 

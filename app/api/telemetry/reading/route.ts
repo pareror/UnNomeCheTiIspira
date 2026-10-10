@@ -120,8 +120,11 @@ export async function POST(request: NextRequest) {
 
     // 6. Notifica tempestiva via Telegram per gli iscritti nel raggio dell'attività
     // Soglia: sound_intensity >= 70 dB | Cooldown anti-spam: 10 minuti (600.000 ms)
+    // Controllo di freschezza: l'evento deve risalire a massimo 2 minuti fa per evitare notifiche su dati vecchi o all'avvio del server
     let telegramSubscribersNotified = 0;
-    if (sound_intensity >= NOISE_ALERT_THRESHOLD_DB) {
+    const isEventRecent = Math.abs(Date.now() - reading.timestamp) <= (2 * 60 * 1000);
+
+    if (sound_intensity >= NOISE_ALERT_THRESHOLD_DB && isEventRecent) {
       const station = getStationById(station_id);
       if (station) {
         try {
@@ -133,6 +136,8 @@ export async function POST(request: NextRequest) {
               longitude: station.longitude,
             },
             soundIntensity: sound_intensity,
+            timestamp: reading.timestamp,
+            maxAgeMs: 2 * 60 * 1000,
             customMessage: 'Rilevamento acustico in tempo reale dal sensore della stazione',
             cooldownMs: NOISE_ALERT_NOTIFY_COOLDOWN_MS,
           });

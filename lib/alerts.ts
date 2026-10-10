@@ -89,7 +89,9 @@ export function evaluateNoiseBreach(
     }
 
     const durationMs = timestamp - startedAt;
+    const isStale = Math.abs(Date.now() - timestamp) > (2 * 60 * 1000);
     const shouldAlert =
+      !isStale &&
       durationMs >= persistenceMs &&
       (notifiedAt === null || timestamp - notifiedAt >= cooldownMs);
 

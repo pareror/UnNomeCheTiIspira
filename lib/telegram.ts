@@ -139,6 +139,8 @@ ${params.customMessage ? `📝 <i>Nota: ${params.customMessage}</i>\n` : ''}
 export async function dispatchNoiseAlertToSubscribers(params: {
   station: { id: string; name: string; latitude: number; longitude: number };
   soundIntensity: number;
+  timestamp?: number; // Timestamp dell'evento sonoro
+  maxAgeMs?: number; // Anzianità massima consentita per inviare l'allerta (default: 2 minuti = 120.000 ms)
   customMessage?: string;
   cooldownMs?: number; // Prevenzione spam (default: 10 minuti = 600.000 ms)
   breach?: { startedAt: number; durationMs: number; thresholdDb: number };
@@ -146,6 +148,7 @@ export async function dispatchNoiseAlertToSubscribers(params: {
   notifiedCount: number;
   subscribersEvaluated: number;
   skippedClosed: number;
+  isStale?: boolean;
   results: Array<{
     chat_id: string;
     address: string;
@@ -156,9 +159,27 @@ export async function dispatchNoiseAlertToSubscribers(params: {
     error?: string;
   }>;
 }> {
+  const now = Date.now();
+  const eventTime = params.timestamp || now;
+  const maxAge = params.maxAgeMs ?? (2 * 60 * 1000); // Max 2 minuti
+
+  // Controllo di freschezza temporale: l'evento acustico deve essere accaduto nell'arco di 2 minuti.
+  // Previene l'invio di messaggi su dati vecchi o storici al riavvio del server.
+  if (Math.abs(now - eventTime) > maxAge) {
+    console.warn(
+      `[Telegram Alert] Notifica annullata: evento sonoro avvenuto ${Math.round((now - eventTime) / 1000)}s fa (limite: ${maxAge / 1000}s).`
+    );
+    return {
+      notifiedCount: 0,
+      subscribersEvaluated: 0,
+      skippedClosed: 0,
+      isStale: true,
+      results: [],
+    };
+  }
+
   const subscribers = getActiveAuthenticatedSubscribers();
   const cooldown = params.cooldownMs ?? (10 * 60 * 1000); // 10 minuti di intervallo minimo anti-spam
-  const now = Date.now();
 
   const results: Array<any> = [];
   let notifiedCount = 0;

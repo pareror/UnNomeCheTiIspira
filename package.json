@@ -10,7 +10,8 @@
     "station": "python scripts/live_microphone_station.py",
     "mic": "python scripts/live_microphone_station.py",
     "telegram:webhook": "node scripts/telegram_set_webhook.js",
-    "telegram:poll": "node scripts/telegram_poll.js"
+    "telegram:poll": "node scripts/telegram_poll.js",
+    "bot": "node scripts/telegram_bot.mjs"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.22",

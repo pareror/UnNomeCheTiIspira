@@ -1,32 +1,41 @@
+import { TELEGRAM_BOT_TOKEN } from './constants';
+import { calculateHaversineDistanceMeters } from './geo';
 import {
   getCompanyBySlug,
   getCompaniesByChatId,
   linkTelegramChat,
   unlinkTelegramChat,
+  getActiveAuthenticatedSubscribers,
+  updateSubscriberLastAlert,
+  TelegramSubscriber,
 } from '@/lib/db';
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org';
 
-function getBotToken(): string | undefined {
-  return process.env.TELEGRAM_BOT_TOKEN;
+function getBotToken(): string {
+  return process.env.TELEGRAM_BOT_TOKEN || TELEGRAM_BOT_TOKEN;
 }
 
 export interface TelegramSendResult {
   ok: boolean;
+  success: boolean;
   skipped?: boolean;
   error?: string;
 }
 
 /**
- * Invia un messaggio di testo tramite la Bot API di Telegram.
- * Se il token non è configurato l'invio viene saltato (nessuna eccezione),
- * così gli ambienti di sviluppo restano funzionanti senza credenziali.
+ * Invia un messaggio tramite la Bot API di Telegram.
+ * Supporta parseMode ('HTML' o 'Markdown').
  */
-export async function sendTelegramMessage(chatId: string, text: string): Promise<TelegramSendResult> {
+export async function sendTelegramMessage(
+  chatId: string | number,
+  text: string,
+  parseMode: 'Markdown' | 'HTML' = 'HTML'
+): Promise<TelegramSendResult> {
   const token = getBotToken();
   if (!token) {
     console.warn('[telegram] TELEGRAM_BOT_TOKEN non configurato: invio messaggio saltato');
-    return { ok: false, skipped: true };
+    return { ok: false, success: false, skipped: true, error: 'Token non configurato' };
   }
 
   try {
@@ -36,6 +45,7 @@ export async function sendTelegramMessage(chatId: string, text: string): Promise
       body: JSON.stringify({
         chat_id: chatId,
         text,
+        parse_mode: parseMode,
         disable_web_page_preview: true,
       }),
     });
@@ -43,12 +53,12 @@ export async function sendTelegramMessage(chatId: string, text: string): Promise
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok) {
       console.error('[telegram] Invio fallito:', data.description || response.statusText);
-      return { ok: false, error: data.description || response.statusText };
+      return { ok: false, success: false, error: data.description || response.statusText };
     }
-    return { ok: true };
+    return { ok: true, success: true };
   } catch (error: any) {
     console.error('[telegram] Errore di rete durante l\'invio:', error.message);
-    return { ok: false, error: error.message };
+    return { ok: false, success: false, error: error.message };
   }
 }
 
@@ -159,4 +169,130 @@ export async function handleTelegramUpdate(update: any): Promise<void> {
         '/stop — disattiva le notifiche'
     );
   }
+}
+
+/**
+ * Formatta il messaggio di allerta rumore per Telegram (HTML sicuro).
+ */
+export function formatNoiseAlertMessage(params: {
+  stationName: string;
+  stationId: string;
+  soundIntensity: number;
+  distanceMeters: number;
+  userAddress: string;
+  userRadiusMeters: number;
+  timestamp?: number;
+  customMessage?: string;
+}): string {
+  const timeStr = new Date(params.timestamp || Date.now()).toLocaleTimeString('it-IT');
+  const dateStr = new Date(params.timestamp || Date.now()).toLocaleDateString('it-IT');
+
+  return `🚨 <b>ALLERTA RUMORE CRITICO A TORINO</b> 🚨
+
+⚠️ <b>Livello Acustico Rilevato:</b> <code>${params.soundIntensity} dB</code> (SOGLIA DI ALLARME SUPERATA)
+📡 <b>Cella Acustica:</b> <b>${params.stationName}</b> [<code>${params.stationId}</code>]
+📍 <b>Distanza dalla tua attività:</b> <b>${Math.round(params.distanceMeters)} metri</b> (Entro il tuo raggio di ${params.userRadiusMeters}m)
+🏢 <b>Tua Sede:</b> ${params.userAddress}
+🕒 <b>Rilevamento:</b> ${dateStr} ore ${timeStr}
+
+${params.customMessage ? `📝 <i>Nota: ${params.customMessage}</i>\n` : ''}
+⚡ <i>Allerta generata automaticamente dal sistema di monitoraggio urbano Torino Noise. Si consiglia di verificare le pertinenze o le emissioni dell'area circostante.</i>`;
+}
+
+/**
+ * Elabora una notifica di rumore e la inoltra a tutti gli iscritti la cui attività
+ * si trova entro il raggio parametrizzato (default 150m) dalla stazione in allarme.
+ */
+export async function dispatchNoiseAlertToSubscribers(params: {
+  station: { id: string; name: string; latitude: number; longitude: number };
+  soundIntensity: number;
+  customMessage?: string;
+  cooldownMs?: number; // Prevenzione spam (default: 45 secondi)
+}): Promise<{
+  notifiedCount: number;
+  subscribersEvaluated: number;
+  results: Array<{
+    chat_id: string;
+    address: string;
+    distanceMeters: number;
+    radiusMeters: number;
+    status: 'sent' | 'cooldown' | 'error';
+    error?: string;
+  }>;
+}> {
+  const subscribers = getActiveAuthenticatedSubscribers();
+  const cooldown = params.cooldownMs ?? 45_000;
+  const now = Date.now();
+
+  const results: Array<any> = [];
+  let notifiedCount = 0;
+
+  for (const sub of subscribers) {
+    if (sub.latitude == null || sub.longitude == null) continue;
+
+    // Calcolo geodetico rigoroso della distanza
+    const distanceMeters = calculateHaversineDistanceMeters(
+      sub.latitude,
+      sub.longitude,
+      params.station.latitude,
+      params.station.longitude
+    );
+
+    const radius = sub.alert_radius_meters || 150;
+
+    // Controlla se la stazione rumorosa rientra nel raggio dell'attività
+    if (distanceMeters <= radius) {
+      // Verifica anti-spam (cooldown)
+      if (sub.last_alert_at && (now - sub.last_alert_at) < cooldown) {
+        results.push({
+          chat_id: sub.chat_id,
+          address: sub.address || '',
+          distanceMeters,
+          radiusMeters: radius,
+          status: 'cooldown',
+        });
+        continue;
+      }
+
+      const text = formatNoiseAlertMessage({
+        stationName: params.station.name,
+        stationId: params.station.id,
+        soundIntensity: params.soundIntensity,
+        distanceMeters,
+        userAddress: sub.address || 'Indirizzo registrato',
+        userRadiusMeters: radius,
+        timestamp: now,
+        customMessage: params.customMessage,
+      });
+
+      const sendRes = await sendTelegramMessage(sub.chat_id, text, 'HTML');
+
+      if (sendRes.ok || sendRes.success) {
+        updateSubscriberLastAlert(sub.chat_id, now);
+        notifiedCount++;
+        results.push({
+          chat_id: sub.chat_id,
+          address: sub.address || '',
+          distanceMeters,
+          radiusMeters: radius,
+          status: 'sent',
+        });
+      } else {
+        results.push({
+          chat_id: sub.chat_id,
+          address: sub.address || '',
+          distanceMeters,
+          radiusMeters: radius,
+          status: 'error',
+          error: sendRes.error,
+        });
+      }
+    }
+  }
+
+  return {
+    notifiedCount,
+    subscribersEvaluated: subscribers.length,
+    results,
+  };
 }

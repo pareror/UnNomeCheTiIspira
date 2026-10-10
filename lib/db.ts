@@ -78,7 +78,42 @@ function initializeDatabase(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_noise_alerts_time
       ON noise_alerts(triggered_at DESC);
+
+    CREATE TABLE IF NOT EXISTS bot_auth_keys (
+      auth_key TEXT PRIMARY KEY,
+      description TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS telegram_subscribers (
+      chat_id TEXT PRIMARY KEY,
+      username TEXT,
+      first_name TEXT,
+      auth_key TEXT,
+      is_authenticated INTEGER NOT NULL DEFAULT 0,
+      address TEXT,
+      latitude REAL,
+      longitude REAL,
+      alert_radius_meters INTEGER NOT NULL DEFAULT 150,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      last_alert_at INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
+
+  // Seeding chiavi autorizzazione per il bot Telegram
+  try {
+    const keyCount = db.prepare('SELECT count(*) as count FROM bot_auth_keys').get() as { count: number };
+    if (keyCount.count === 0) {
+      const insertKey = db.prepare('INSERT OR IGNORE INTO bot_auth_keys (auth_key, description) VALUES (?, ?)');
+      insertKey.run('TORINO-ALERT-KEY-2026', 'Master Key Torino Allerte 2026');
+      insertKey.run('BAR-SAN-SALVARIO-01', 'Esercente San Salvario');
+      insertKey.run('COMMERCIO-VIA-PO-14', 'Esercente Via Po');
+    }
+  } catch (err) {
+    console.warn('[DB] Inizializzazione chiavi bot:', err);
+  }
 
   // Migrazione retrocompatibile per colonna is_dummy se tabella preesistente
   try {
@@ -524,4 +559,124 @@ export function insertNoiseAlert(input: {
 export function getRecentAlerts(limit: number = 50): NoiseAlert[] {
   const db = getDb();
   return db.prepare('SELECT * FROM noise_alerts ORDER BY triggered_at DESC LIMIT ?').all(limit) as NoiseAlert[];
+}
+
+// ==========================================
+// UTENTI ED ISCRITTI TELEGRAM BOT (AREA 150M)
+// ==========================================
+
+export interface TelegramSubscriber {
+  chat_id: string;
+  username: string | null;
+  first_name: string | null;
+  auth_key: string | null;
+  is_authenticated: number;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  alert_radius_meters: number;
+  is_active: number;
+  last_alert_at: number;
+  created_at: string;
+}
+
+export interface BotAuthKey {
+  auth_key: string;
+  description: string | null;
+  is_active: number;
+  created_at: string;
+}
+
+// Verifica se una chiave di autorizzazione del Bot è valida e attiva
+export function verifyBotAuthKey(key: string): boolean {
+  const db = getDb();
+  const row = db.prepare('SELECT auth_key FROM bot_auth_keys WHERE auth_key = ? AND is_active = 1').get(key.trim());
+  return Boolean(row);
+}
+
+// Crea o aggiorna un iscritto al Bot Telegram
+export function upsertTelegramSubscriber(data: {
+  chat_id: string;
+  username?: string | null;
+  first_name?: string | null;
+  auth_key?: string | null;
+  is_authenticated?: number;
+  address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  alert_radius_meters?: number;
+  is_active?: number;
+  last_alert_at?: number;
+}): void {
+  const db = getDb();
+  const existing = db.prepare('SELECT * FROM telegram_subscribers WHERE chat_id = ?').get(data.chat_id) as TelegramSubscriber | undefined;
+
+  if (existing) {
+    db.prepare(`
+      UPDATE telegram_subscribers SET
+        username = COALESCE(?, username),
+        first_name = COALESCE(?, first_name),
+        auth_key = COALESCE(?, auth_key),
+        is_authenticated = COALESCE(?, is_authenticated),
+        address = COALESCE(?, address),
+        latitude = COALESCE(?, latitude),
+        longitude = COALESCE(?, longitude),
+        alert_radius_meters = COALESCE(?, alert_radius_meters),
+        is_active = COALESCE(?, is_active),
+        last_alert_at = COALESCE(?, last_alert_at)
+      WHERE chat_id = ?
+    `).run(
+      data.username ?? null,
+      data.first_name ?? null,
+      data.auth_key ?? null,
+      data.is_authenticated ?? null,
+      data.address ?? null,
+      data.latitude ?? null,
+      data.longitude ?? null,
+      data.alert_radius_meters ?? null,
+      data.is_active ?? null,
+      data.last_alert_at ?? null,
+      data.chat_id
+    );
+  } else {
+    db.prepare(`
+      INSERT INTO telegram_subscribers (
+        chat_id, username, first_name, auth_key, is_authenticated,
+        address, latitude, longitude, alert_radius_meters, is_active, last_alert_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.chat_id,
+      data.username || null,
+      data.first_name || null,
+      data.auth_key || null,
+      data.is_authenticated ?? 0,
+      data.address || null,
+      data.latitude || null,
+      data.longitude || null,
+      data.alert_radius_meters ?? 150,
+      data.is_active ?? 1,
+      data.last_alert_at ?? 0
+    );
+  }
+}
+
+// Recupera un iscritto dal suo chat_id
+export function getTelegramSubscriber(chat_id: string): TelegramSubscriber | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM telegram_subscribers WHERE chat_id = ?').get(chat_id) as TelegramSubscriber | undefined;
+}
+
+// Recupera tutti gli iscritti attivi, autenticati e con coordinate configurate
+export function getActiveAuthenticatedSubscribers(): TelegramSubscriber[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT * FROM telegram_subscribers 
+    WHERE is_authenticated = 1 AND is_active = 1 AND latitude IS NOT NULL AND longitude IS NOT NULL
+  `).all() as TelegramSubscriber[];
+}
+
+// Aggiorna il timestamp dell'ultima allerta inviata per prevenire spam
+export function updateSubscriberLastAlert(chat_id: string, timestamp: number = Date.now()): void {
+  const db = getDb();
+  db.prepare('UPDATE telegram_subscribers SET last_alert_at = ? WHERE chat_id = ?').run(timestamp, chat_id);
 }

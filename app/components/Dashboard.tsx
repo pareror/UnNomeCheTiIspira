@@ -33,6 +33,7 @@ export default function Dashboard() {
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [simMessage, setSimMessage] = useState<string>('');
   const [showArduinoSnippet, setShowArduinoSnippet] = useState<boolean>(false);
+  const [showBotModal, setShowBotModal] = useState<boolean>(false);
 
   // 1. Streaming Just-in-Time (SSE): riceve i campionamenti all'istante via push
   // Nessun loop di polling ogni secondo (0 chiamate HTTP inutili e performance massime)
@@ -283,6 +284,26 @@ export default function Dashboard() {
             }}
           >
             {showArduinoSnippet ? 'Chiudi Guida Slave' : 'Codice Arduino'}
+          </button>
+
+          <button
+            onClick={() => setShowBotModal(true)}
+            style={{
+              padding: '6px 12px',
+              backgroundColor: '#0284c7',
+              color: '#ffffff',
+              border: '1px solid #38bdf8',
+              borderRadius: '5px',
+              fontSize: '12px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+            title="Configura e ricevi allerte rumore via Telegram"
+          >
+            <span>🤖 Bot Telegram (@NoiseTurin_bot)</span>
           </button>
         </div>
       </header>
@@ -604,6 +625,125 @@ httpClient.addHeader("x-api-key", "arduino-torino-noise-secret-2026");`}
                 }}
               >
                 Chiudi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONFIGURAZIONE BOT TELEGRAM */}
+      {showBotModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.75)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          backdropFilter: 'blur(3px)'
+        }}>
+          <div style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '12px',
+            width: '90%',
+            maxWidth: '680px',
+            maxHeight: '85vh',
+            overflowY: 'auto',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            <div style={{
+              padding: '16px 20px',
+              borderBottom: '1px solid #e2e8f0',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              backgroundColor: '#0f172a',
+              color: '#ffffff',
+              borderRadius: '12px 12px 0 0'
+            }}>
+              <h3 style={{ margin: 0, fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>🤖</span> Bot Telegram Allerte Acustiche (@NoiseTurin_bot)
+              </h3>
+              <button
+                onClick={() => setShowBotModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#94a3b8',
+                  fontSize: '20px',
+                  cursor: 'pointer',
+                  padding: '0 4px'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ padding: '20px', fontSize: '13px', lineHeight: '1.6', color: '#334155' }}>
+              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '12px', marginBottom: '16px' }}>
+                <strong style={{ color: '#166534' }}>🎯 Come funziona il Bot Telegram:</strong>
+                <p style={{ margin: '4px 0 0 0', color: '#15803d' }}>
+                  Il bot monitora in tempo reale le emissioni sonore a Torino e ti avvisa immediatamente se una cella acustica entro <b>150 metri</b> (raggio configurabile) dalla tua attività supera la soglia critica di rumore.
+                </p>
+              </div>
+
+              <h4 style={{ margin: '12px 0 6px 0', color: '#0f172a' }}>1. Avvio del Bot e Autenticazione</h4>
+              <p style={{ margin: 0 }}>
+                Cerca <b>@NoiseTurin_bot</b> su Telegram oppure apri il link <a href="https://t.me/NoiseTurin_bot" target="_blank" rel="noreferrer" style={{ color: '#0284c7', fontWeight: 600 }}>t.me/NoiseTurin_bot</a>. Premi <code>/start</code> e inserisci la chiave di autorizzazione univoca:
+              </p>
+              <pre style={{ backgroundColor: '#1e293b', color: '#38bdf8', padding: '8px 12px', borderRadius: '6px', margin: '8px 0', fontSize: '12px', fontWeight: 600 }}>
+                TORINO-ALERT-KEY-2026
+              </pre>
+
+              <h4 style={{ margin: '14px 0 6px 0', color: '#0f172a' }}>2. Registrazione Indirizzo Sede / Esercizio</h4>
+              <p style={{ margin: 0 }}>
+                Invia come messaggio la via e il numero civico a Torino (es. <code>Via Po 14</code> oppure <code>Via Roma 10</code>). Il bot geolocalizzerà la tua attività e calcolerà in automatico tutte le celle acustiche nel raggio di 150m.
+              </p>
+
+              <h4 style={{ margin: '14px 0 6px 0', color: '#0f172a' }}>3. Comandi Telegram Disponibili</h4>
+              <ul style={{ margin: '6px 0 12px 20px', padding: 0 }}>
+                <li><code>/raggio &lt;metri&gt;</code> — Modifica il perimetro di controllo (default: 150m, non hardcoddato).</li>
+                <li><code>/stazioni</code> — Elenca le celle acustiche attualmente monitorate entro il tuo raggio.</li>
+                <li><code>/stato</code> — Mostra sede registrata, coordinate geodetiche e stato attivo.</li>
+                <li><code>/test_allerta</code> — Invia un test di notifica allerta alla tua chat.</li>
+              </ul>
+
+              <h4 style={{ margin: '14px 0 6px 0', color: '#0f172a' }}>4. API Protetta per Notifiche Rumore</h4>
+              <p style={{ margin: '0 0 6px 0' }}>
+                L&apos;API protetta <code>POST /api/alerts/noise</code> accetta la richiesta protetta con <code>x-api-key</code> e inoltra l&apos;allerta via Telegram a tutte le attività nel raggio:
+              </p>
+              <pre style={{ backgroundColor: '#1e293b', color: '#f8fafc', padding: '10px', borderRadius: '6px', fontSize: '11px', fontFamily: 'Consolas, monospace', overflowX: 'auto' }}>
+{`curl -X POST http://localhost:3000/api/alerts/noise \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: dev-sensor-secret-key-2026" \\
+  -d '{
+    "station_id": "ard-uno-q-real-mic",
+    "sound_intensity": 88,
+    "message": "Superamento soglia consentita in orario notturno"
+  }'`}
+              </pre>
+            </div>
+
+            <div style={{ padding: '12px 20px', borderTop: '1px solid #e2e8f0', textAlign: 'right', backgroundColor: '#f8fafc', borderRadius: '0 0 12px 12px' }}>
+              <button
+                onClick={() => setShowBotModal(false)}
+                style={{
+                  padding: '6px 14px',
+                  backgroundColor: '#0f172a',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                Ho Capito / Chiudi
               </button>
             </div>
           </div>

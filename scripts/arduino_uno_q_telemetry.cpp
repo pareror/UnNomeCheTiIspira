@@ -20,8 +20,8 @@ const char* WIFI_PASSWORD = "PASSWORD_WIFI";
 
 const char* SERVER_URL    = "http://192.168.22.103:3000/api/telemetry/reading";
 const char* API_KEY       = "arduino-torino-noise-secret-2026";
-const char* STATION_ID    = "ard-uno-q-01";
-const char* STATION_NAME  = "Arduino Uno Q (San Salvario)";
+const char* STATION_ID    = "ard-uno-q-real";
+const char* STATION_NAME  = "Arduino Uno Q (Stazione Hardware)";
 
 // PIN SENSORE MICROFONICO
 const int MIC_PIN = 34;

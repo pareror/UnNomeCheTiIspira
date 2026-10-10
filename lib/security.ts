@@ -19,20 +19,20 @@ export const TelemetryReadingSchema = z.object({
     .nonnegative('Il valore deve essere un intero positivo (unsigned int)')
     .max(1023, 'Il valore supera il limite massimo consentito per i campionatori sonori'),
 
-  // Timestamp opzionale fornito dall'Arduino slave
+  // Timestamp opzionale fornito dall'Arduino slave (con fallback trasparente a Date.now() se non sincronizzato via NTP)
   timestamp: z
     .number()
     .int()
-    .positive()
     .optional()
-    .refine((ts) => {
-      if (!ts) return true;
+    .transform((ts) => {
+      if (!ts) return Date.now();
       const now = Date.now();
-      // Tolleranza: non più di 2 minuti nel futuro e non più di 24 ore nel passato (anti-replay attack)
-      const isNotTooFuture = ts <= now + 120_000;
-      const isNotTooOld = ts >= now - 86_400_000;
-      return isNotTooFuture && isNotTooOld;
-    }, 'Timestamp non valido o fuori dalla finestra temporale consentita (possibile replay attack)'),
+      // Se l'orologio dell'Arduino è fuori sincronia (es. prima di NTP o avanti nel tempo), usa l'orario del server
+      if (ts > now + 120_000 || ts < now - 86_400_000) {
+        return now;
+      }
+      return ts;
+    }),
   // Metadati opzionali per auto-registrazione della stazione
   name: z.string().max(100).optional(),
   latitude: z.number().min(44.5).max(45.5).optional(),

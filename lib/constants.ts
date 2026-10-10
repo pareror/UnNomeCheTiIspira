@@ -109,3 +109,40 @@ export function getNoiseLevel(intensity: number): NoiseLevelInfo {
     };
   }
 }
+
+// Funzione di interpolazione lineare (LERP) per colori RGB
+export function interpolateRgb(
+  color1: [number, number, number], 
+  color2: [number, number, number], 
+  factor: number
+): string {
+  const f = Math.max(0, Math.min(1, factor));
+  const r = Math.round(color1[0] + (color2[0] - color1[0]) * f);
+  const g = Math.round(color1[1] + (color2[1] - color1[1]) * f);
+  const b = Math.round(color1[2] + (color2[2] - color1[2]) * f);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+// Restituisce un colore continuo, graduale e privo di scatti repentini in base ai decibel reali
+export function getSmoothNoiseColor(intensity: number): string {
+  if (intensity <= 38) {
+    return 'rgb(241, 245, 249)'; // Bianco / Grigio ghiaccio (< 40 dB)
+  } else if (intensity <= 60) {
+    // Transizione graduale da Bianco a Verde
+    const f = (intensity - 38) / (60 - 38);
+    return interpolateRgb([241, 245, 249], [34, 197, 94], f);
+  } else if (intensity <= 75) {
+    // Transizione graduale da Verde a Giallo ambra
+    const f = (intensity - 60) / (75 - 60);
+    return interpolateRgb([34, 197, 94], [234, 179, 8], f);
+  } else if (intensity <= 90) {
+    // Transizione graduale da Giallo a Rosso fuoco
+    const f = (intensity - 75) / (90 - 75);
+    return interpolateRgb([234, 179, 8], [255, 23, 68], f);
+  } else {
+    // Transizione graduale da Rosso fuoco a Viola fluorescente
+    const f = Math.min(1, (intensity - 90) / 20);
+    return interpolateRgb([255, 23, 68], [213, 0, 249], f);
+  }
+}
+

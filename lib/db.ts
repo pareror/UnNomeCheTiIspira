@@ -271,8 +271,8 @@ export function insertNoiseReading(
   const isDummyVal = stationMeta?.is_dummy ? 1 : 0;
 
   // Verifica esistenza stazione: se non esiste ancora, auto-registrazione dinamica
-  const stationExists = db.prepare('SELECT id FROM stations WHERE id = ?').get(station_id);
-  if (!stationExists) {
+  let station = db.prepare('SELECT id, name, latitude, longitude, is_dummy FROM stations WHERE id = ?').get(station_id) as any;
+  if (!station) {
     const name = stationMeta?.name || `Stazione Arduino (${station_id})`;
     // Coordinate fornite dal dispositivo o fallback su Torino centro
     const lat = stationMeta?.latitude ?? 45.0705;
@@ -282,6 +282,14 @@ export function insertNoiseReading(
       INSERT INTO stations (id, name, latitude, longitude, is_dummy)
       VALUES (?, ?, ?, ?, ?)
     `).run(station_id, name, lat, lng, isDummyVal);
+
+    station = {
+      id: station_id,
+      name,
+      latitude: lat,
+      longitude: lng,
+      is_dummy: isDummyVal,
+    };
   }
 
   const stmt = db.prepare(`
@@ -290,6 +298,24 @@ export function insertNoiseReading(
   `);
 
   const result = stmt.run(station_id, sound_intensity, time);
+
+  // Emetti evento real-time per lo stream Just-in-Time
+  try {
+    const { telemetryEmitter } = require('./events');
+    telemetryEmitter.emit('reading', {
+      id: station.id,
+      name: station.name,
+      latitude: station.latitude,
+      longitude: station.longitude,
+      is_dummy: Boolean(station.is_dummy),
+      current_intensity: sound_intensity,
+      last_reading_time: time,
+      radius_meters: 15,
+    });
+  } catch (err) {
+    console.error('Errore durante l\'emissione evento stream:', err);
+  }
+
   return {
     id: Number(result.lastInsertRowid),
     station_id,
@@ -322,12 +348,12 @@ export function getStationsLive(filterMode: 'all' | 'live_only' | 'dummy_only' =
     FROM stations s
     LEFT JOIN (
       SELECT station_id, sound_intensity, timestamp
-      FROM noise_readings nr1
-      WHERE timestamp = (
-        SELECT MAX(timestamp) 
-        FROM noise_readings nr2 
-        WHERE nr2.station_id = nr1.station_id
-      )
+      FROM (
+        SELECT station_id, sound_intensity, timestamp,
+               ROW_NUMBER() OVER (PARTITION BY station_id ORDER BY id DESC) as rn
+        FROM noise_readings
+      ) sub
+      WHERE sub.rn = 1
     ) r ON s.id = r.station_id
     ${whereClause}
     ORDER BY s.is_dummy ASC, s.name ASC

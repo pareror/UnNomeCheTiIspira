@@ -44,6 +44,29 @@ export const TelemetryReadingSchema = z.object({
 
 export type TelemetryReadingInput = z.infer<typeof TelemetryReadingSchema>;
 
+// Registrazione di un esercizio (esercente) destinatario delle allerte
+export const CompanyRegistrationSchema = z.object({
+  slug: z
+    .string()
+    .min(2, 'slug troppo breve')
+    .max(64, 'slug troppo lungo')
+    .regex(/^[a-z0-9-]+$/, 'slug: consentiti solo minuscole, numeri e trattini'),
+  name: z.string().min(2, 'nome troppo breve').max(120, 'nome troppo lungo'),
+  latitude: z.number().min(44.5).max(45.5),
+  longitude: z.number().min(7.2).max(8.2),
+  google_place_id: z.string().max(255).optional().nullable(),
+  // Orari di apertura in sintassi OpenStreetMap, es. "Mo-Fr 18:00-02:00; Sa 19:00-03:00"
+  opening_hours: z.string().max(255).optional().nullable(),
+  // Riferimento all'elemento OpenStreetMap per recuperare gli orari, es. "node/123456"
+  osm_id: z
+    .string()
+    .regex(/^(node|way|relation)\/\d+$/, 'osm_id deve essere nel formato node/123, way/123 o relation/123')
+    .optional()
+    .nullable(),
+});
+
+export type CompanyRegistrationInput = z.infer<typeof CompanyRegistrationSchema>;
+
 // ==========================================
 // 2. AUTENTICAZIONE TRAMITE API KEY
 // ==========================================

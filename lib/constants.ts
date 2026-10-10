@@ -27,6 +27,26 @@ export type OpenFreeMapStyleKey = keyof typeof OPENFREEMAP_STYLES;
 // Frequenza di auto-refresh del frontend per la mappa: 1 minuto (60 secondi)
 export const FRONTEND_REFRESH_INTERVAL_MS = 60 * 1000;
 
+// ==========================================
+// ALLERTA RUMORE PERSISTENTE (ESERCENTI)
+// ==========================================
+
+// Soglia sonora oltre la quale una lettura è considerata "volume elevato" (dB).
+// Valori > 65 dB corrispondono alle bande "Medio", "Forte" e "Critico" (vedi getNoiseLevel).
+export const NOISE_ALERT_THRESHOLD_DB = 65;
+
+// Durata minima di rumore elevato e continuativo prima di inviare l'allerta: 10 minuti
+export const NOISE_ALERT_PERSISTENCE_MS = 10 * 60 * 1000;
+
+// Tolleranza: una breve pausa sotto soglia (es. 1 minuto) non azzera una violazione in corso
+export const NOISE_ALERT_QUIET_GRACE_MS = 60 * 1000;
+
+// Intervallo minimo tra due allerte per la stessa violazione (anti-spam): 10 minuti
+export const NOISE_ALERT_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000;
+
+// Raggio attorno alla stazione entro cui gli esercenti sono considerati "limitrofi" e allertati
+export const COMPANY_ALERT_RADIUS_METERS = 200;
+
 // Scala cromatica del rumore secondo le specifiche:
 // - Poco o nessun rumore: Bianco
 // - Rumore lieve: Verde

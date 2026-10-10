@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAllStations, insertNoiseReading } from '@/lib/db';
+import { processReadingForAlerts } from '@/lib/alerts';
 import { applySecurityHeaders } from '@/lib/security';
 
 // Genera variazioni realistiche per le stazioni di Torino
@@ -33,9 +34,12 @@ export async function POST() {
     const now = Date.now();
     const newReadings = [];
 
+    let alertsTriggered = 0;
     for (const station of stations) {
       const intensity = generateSimulatedIntensity(station.id);
       const reading = insertNoiseReading(station.id, intensity, now);
+      const alertResult = await processReadingForAlerts(station.id, intensity, reading.timestamp);
+      if (alertResult.alerted) alertsTriggered += 1;
       newReadings.push({
         station_id: station.id,
         name: station.name,
@@ -48,6 +52,7 @@ export async function POST() {
       NextResponse.json({
         success: true,
         message: `Simulazione completata con successo per ${stations.length} stazioni slave`,
+        alerts_triggered: alertsTriggered,
         readings_generated: newReadings,
       })
     );

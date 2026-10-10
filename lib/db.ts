@@ -40,11 +40,61 @@ function initializeDatabase(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_readings_station_time 
       ON noise_readings(station_id, timestamp DESC);
+
+    CREATE TABLE IF NOT EXISTS companies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      telegram_chat_id TEXT,
+      latitude REAL NOT NULL,
+      longitude REAL NOT NULL,
+      google_place_id TEXT,
+      opening_hours TEXT,
+      osm_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS noise_breaches (
+      station_id TEXT PRIMARY KEY,
+      started_at INTEGER NOT NULL,
+      last_high_at INTEGER NOT NULL,
+      quiet_since INTEGER,
+      notified_at INTEGER,
+      alert_count INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS noise_alerts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      station_id TEXT NOT NULL,
+      threshold_db INTEGER NOT NULL,
+      started_at INTEGER NOT NULL,
+      triggered_at INTEGER NOT NULL,
+      duration_ms INTEGER NOT NULL,
+      recipients INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'sent',
+      details TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_noise_alerts_time
+      ON noise_alerts(triggered_at DESC);
   `);
 
   // Migrazione retrocompatibile per colonna is_dummy se tabella preesistente
   try {
     db.exec(`ALTER TABLE stations ADD COLUMN is_dummy INTEGER NOT NULL DEFAULT 0;`);
+  } catch {
+    // La colonna esiste già
+  }
+
+  // Migrazioni retrocompatibili per le colonne orari di apertura degli esercizi
+  try {
+    db.exec(`ALTER TABLE companies ADD COLUMN opening_hours TEXT;`);
+  } catch {
+    // La colonna esiste già
+  }
+  try {
+    db.exec(`ALTER TABLE companies ADD COLUMN osm_id TEXT;`);
   } catch {
     // La colonna esiste già
   }
@@ -174,6 +224,41 @@ export interface StationLiveStatus extends Station {
   last_reading_time: number | null;
 }
 
+export interface Company {
+  id: number;
+  slug: string;
+  name: string;
+  telegram_chat_id: string | null;
+  latitude: number;
+  longitude: number;
+  google_place_id: string | null;
+  opening_hours: string | null;
+  osm_id: string | null;
+  created_at: string;
+}
+
+export interface NoiseBreach {
+  station_id: string;
+  started_at: number;
+  last_high_at: number;
+  quiet_since: number | null;
+  notified_at: number | null;
+  alert_count: number;
+}
+
+export interface NoiseAlert {
+  id: number;
+  station_id: string;
+  threshold_db: number;
+  started_at: number;
+  triggered_at: number;
+  duration_ms: number;
+  recipients: number;
+  status: string;
+  details: string | null;
+  created_at: string;
+}
+
 // Inserimento nuova lettura dal sensore Arduino (is_dummy = 0 per hardware live reale)
 export function insertNoiseReading(
   station_id: string, 
@@ -271,4 +356,146 @@ export function getAllStations(filterMode: 'all' | 'live_only' | 'dummy_only' = 
   if (filterMode === 'live_only') whereClause = 'WHERE is_dummy = 0';
   else if (filterMode === 'dummy_only') whereClause = 'WHERE is_dummy = 1';
   return db.prepare(`SELECT * FROM stations ${whereClause} ORDER BY name ASC`).all() as Station[];
+}
+
+export function getStationById(stationId: string): Station | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM stations WHERE id = ?').get(stationId) as Station | undefined;
+}
+
+// ==========================================
+// ANAGRAFICA AZIENDE (ESERCENTI) + TELEGRAM
+// ==========================================
+
+export function upsertCompany(input: {
+  slug: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  google_place_id?: string | null;
+  opening_hours?: string | null;
+  osm_id?: string | null;
+}): Company {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO companies (slug, name, latitude, longitude, google_place_id, opening_hours, osm_id)
+    VALUES (@slug, @name, @latitude, @longitude, @google_place_id, @opening_hours, @osm_id)
+    ON CONFLICT(slug) DO UPDATE SET
+      name = excluded.name,
+      latitude = excluded.latitude,
+      longitude = excluded.longitude,
+      google_place_id = excluded.google_place_id,
+      opening_hours = excluded.opening_hours,
+      osm_id = excluded.osm_id
+  `).run({
+    slug: input.slug,
+    name: input.name,
+    latitude: input.latitude,
+    longitude: input.longitude,
+    google_place_id: input.google_place_id ?? null,
+    opening_hours: input.opening_hours ?? null,
+    osm_id: input.osm_id ?? null,
+  });
+  return getCompanyBySlug(input.slug)!;
+}
+
+export function getCompanyBySlug(slug: string): Company | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM companies WHERE slug = ?').get(slug) as Company | undefined;
+}
+
+export function listCompanies(): Company[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM companies ORDER BY name ASC').all() as Company[];
+}
+
+export function getCompaniesWithTelegram(): Company[] {
+  const db = getDb();
+  return db
+    .prepare("SELECT * FROM companies WHERE telegram_chat_id IS NOT NULL AND telegram_chat_id != '' ORDER BY name ASC")
+    .all() as Company[];
+}
+
+export function linkTelegramChat(slug: string, chatId: string): Company | undefined {
+  const db = getDb();
+  const company = getCompanyBySlug(slug);
+  if (!company) return undefined;
+  db.prepare('UPDATE companies SET telegram_chat_id = ? WHERE slug = ?').run(chatId, slug);
+  return getCompanyBySlug(slug);
+}
+
+export function unlinkTelegramChat(chatId: string): number {
+  const db = getDb();
+  const result = db.prepare('UPDATE companies SET telegram_chat_id = NULL WHERE telegram_chat_id = ?').run(chatId);
+  return result.changes;
+}
+
+export function getCompaniesByChatId(chatId: string): Company[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM companies WHERE telegram_chat_id = ? ORDER BY name ASC').all(chatId) as Company[];
+}
+
+// ==========================================
+// STATO DELLE SOGLIE DI RUMORE (BREACH) E ALERT
+// ==========================================
+
+export function getNoiseBreach(stationId: string): NoiseBreach | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM noise_breaches WHERE station_id = ?').get(stationId) as NoiseBreach | undefined;
+}
+
+export function upsertNoiseBreach(breach: NoiseBreach): void {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO noise_breaches (station_id, started_at, last_high_at, quiet_since, notified_at, alert_count)
+    VALUES (@station_id, @started_at, @last_high_at, @quiet_since, @notified_at, @alert_count)
+    ON CONFLICT(station_id) DO UPDATE SET
+      started_at = excluded.started_at,
+      last_high_at = excluded.last_high_at,
+      quiet_since = excluded.quiet_since,
+      notified_at = excluded.notified_at,
+      alert_count = excluded.alert_count
+  `).run(breach);
+}
+
+export function deleteNoiseBreach(stationId: string): void {
+  const db = getDb();
+  db.prepare('DELETE FROM noise_breaches WHERE station_id = ?').run(stationId);
+}
+
+export function getActiveBreaches(): NoiseBreach[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM noise_breaches ORDER BY started_at ASC').all() as NoiseBreach[];
+}
+
+export function insertNoiseAlert(input: {
+  station_id: string;
+  threshold_db: number;
+  started_at: number;
+  triggered_at: number;
+  duration_ms: number;
+  recipients: number;
+  status: string;
+  details?: string | null;
+}): NoiseAlert {
+  const db = getDb();
+  const result = db.prepare(`
+    INSERT INTO noise_alerts (station_id, threshold_db, started_at, triggered_at, duration_ms, recipients, status, details)
+    VALUES (@station_id, @threshold_db, @started_at, @triggered_at, @duration_ms, @recipients, @status, @details)
+  `).run({
+    station_id: input.station_id,
+    threshold_db: input.threshold_db,
+    started_at: input.started_at,
+    triggered_at: input.triggered_at,
+    duration_ms: input.duration_ms,
+    recipients: input.recipients,
+    status: input.status,
+    details: input.details ?? null,
+  });
+  return db.prepare('SELECT * FROM noise_alerts WHERE id = ?').get(Number(result.lastInsertRowid)) as NoiseAlert;
+}
+
+export function getRecentAlerts(limit: number = 50): NoiseAlert[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM noise_alerts ORDER BY triggered_at DESC LIMIT ?').all(limit) as NoiseAlert[];
 }

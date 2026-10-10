@@ -6,6 +6,7 @@ import {
   applySecurityHeaders 
 } from '@/lib/security';
 import { insertNoiseReading } from '@/lib/db';
+import { processReadingForAlerts } from '@/lib/alerts';
 
 async function parseIncomingPayload(request: NextRequest): Promise<any> {
   const contentType = request.headers.get('content-type') || '';
@@ -115,12 +116,16 @@ export async function POST(request: NextRequest) {
       longitude,
     });
 
+    // 6. Valutazione della soglia di rumore persistente e invio allerte esercenti
+    const alertResult = await processReadingForAlerts(station_id, sound_intensity, reading.timestamp);
+
     return applySecurityHeaders(
       NextResponse.json(
         {
           success: true,
           message: 'Dato registrato con successo nel database in tempo reale',
           data: reading,
+          alert_triggered: alertResult.alerted,
         },
         { status: 201 }
       )

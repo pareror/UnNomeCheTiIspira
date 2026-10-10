@@ -10,7 +10,9 @@ Guida sintetica ai comandi essenziali per l'esecuzione del progetto e l'interazi
 |---|---|
 | `npm run dev` | Avvia il server Next.js full-stack su `http://localhost:3000` (Dashboard + API SSE). |
 | `npm run bot` | Avvia il daemon del bot Telegram `@NoiseTurin_bot` in ascolto per i comandi utente. |
-| `npm run mic` | Avvia la stazione reale che campiona i dB dal microfono del PC (Arduino Uno Q emulato). |
+| `npm run arduino` | Avvia il client ottimizzato per Arduino Uno Q (4GB) per trasmettere telemetria al Master. |
+| `npm run tunnel` | Espone il server online su Internet pubblico via HTTPS (`localtunnel`). |
+| `npm run mic` | Avvia la stazione reale che campiona i dB dal microfono del PC. |
 | `npm run simulate` | Genera campionamenti casuali sulle stazioni acustiche di Torino per test rapidi. |
 | `npm run build` | Esegue il build ottimizzato e verifica i tipi TypeScript (`tsc`). |
 
@@ -47,3 +49,43 @@ Guida sintetica ai comandi essenziali per l'esecuzione del progetto e l'interazi
 3. **Anti-Spam 10 Minuti:** tra un avviso e l'altro per la stessa attività intercorrono almeno **10 minuti**.
 4. **Validità Temporale (Max 2 Minuti):** vengono notificati solo eventi accaduti negli ultimi **120 secondi**, evitando falsi allarmi su dati storici o vecchi al riavvio del server.
 5. **API Protetta Allerte:** `POST /api/alerts/noise` protetta da header `x-api-key` configurata in `.env.local`.
+
+---
+
+## 📡 Stazione Reale Arduino Uno Q (4GB) — Connessione Wi-Fi & Online
+
+### 1. Connessione sulla Rete Wi-Fi Locale (Stessa Rete del PC)
+Il server Next.js è in ascolto su tutte le interfacce (`0.0.0.0:3000`).
+- **IP Locale PC:** `192.168.22.103`
+- **Endpoint Telemetria:** `http://192.168.22.103:3000/api/telemetry/reading`
+- **Header Autenticazione:** `x-api-key: arduino-torino-noise-secret-2026`
+
+**Esecuzione su Arduino Uno Q (ambiente Linux):**
+```bash
+# 1. Installa requests (se non già presente)
+pip3 install requests
+
+# 2. Avvia la stazione reale
+python3 arduino_uno_q_telemetry.py
+```
+*Parametri opzionali da riga di comando:*
+- `--server http://192.168.22.103:3000/api/telemetry/reading` (impostato di default)
+- `--id ard-mio-locale` (identificativo univoco)
+- `--name "Arduino Stazione San Salvario"` (nome visualizzato sulla mappa)
+- `--lat 45.0566 --lon 7.6812` (coordinate geografiche della stazione)
+- `--audio auto` (rileva microfono hardware I2S/USB/ALSA o usa simulatore calibrato)
+
+### 2. Esposizione Online su Internet Pubblico (Arduino su Rete Esterna / 4G)
+Se l'Arduino si trova in un'altra location o connesso a un hotspot mobile 4G/5G:
+```bash
+# Sul PC dove gira Next.js:
+npm run tunnel
+# oppure:
+npx localtunnel --port 3000
+```
+Verrà generato un URL pubblico (es. `https://torino-noise-station.loca.lt`).
+Sull'Arduino basterà avviare:
+```bash
+python3 arduino_uno_q_telemetry.py --server https://tuo-url.loca.lt/api/telemetry/reading
+```
+

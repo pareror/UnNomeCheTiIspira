@@ -29,23 +29,43 @@ export default function Dashboard() {
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
   const [isStreamConnected, setIsStreamConnected] = useState<boolean>(false);
   const [isSimulatingContinuous, setIsSimulatingContinuous] = useState<boolean>(false);
-  const [showDummyStations, setShowDummyStations] = useState<boolean>(false);
+  const [showDummyStations, setShowDummyStations] = useState<boolean>(true);
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [simMessage, setSimMessage] = useState<string>('');
   const [showArduinoSnippet, setShowArduinoSnippet] = useState<boolean>(false);
   const [showBotModal, setShowBotModal] = useState<boolean>(false);
 
-  // 1. Streaming Just-in-Time (SSE): riceve i campionamenti all'istante via push
-  // Nessun loop di polling ogni secondo (0 chiamate HTTP inutili e performance massime)
+  // Recupero snapshot immediato via HTTP (istante 0ms senza attendere handshake SSE)
+  const fetchStationsSnapshot = useCallback(async () => {
+    try {
+      const url = showDummyStations ? '/api/stations?filter=all' : '/api/stations?filter=live_only';
+      const res = await fetch(url, { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        setStations(data.stations || []);
+        setLastRefreshedAt(new Date(data.timestamp || Date.now()));
+        setIsLoading(false);
+      }
+    } catch (err) {
+      console.error('Errore snapshot iniziale:', err);
+    }
+  }, [showDummyStations]);
+
+  // 1. Snapshot iniziale HTTP immediato + Streaming Just-in-Time (SSE)
   useEffect(() => {
     setIsLoading(true);
+    // Caricamento snapshot prioritario immediato
+    fetchStationsSnapshot();
+
     const filterParam = showDummyStations ? 'all' : 'live_only';
     const eventSource = new EventSource(`/api/telemetry/stream?filter=${filterParam}`);
 
     eventSource.addEventListener('init', (e: MessageEvent) => {
       try {
         const payload = JSON.parse(e.data);
-        setStations(payload.stations || []);
+        if (payload.stations && payload.stations.length > 0) {
+          setStations(payload.stations);
+        }
         setIsStreamConnected(true);
         setLastRefreshedAt(new Date(payload.timestamp || Date.now()));
         setIsLoading(false);
@@ -91,22 +111,8 @@ export default function Dashboard() {
     return () => {
       eventSource.close();
     };
-  }, [showDummyStations]);
+  }, [showDummyStations, fetchStationsSnapshot]);
 
-  // Recupero manuale on-demand dello snapshot (opzionale)
-  const fetchStationsSnapshot = useCallback(async () => {
-    try {
-      const url = showDummyStations ? '/api/stations?filter=all' : '/api/stations?filter=live_only';
-      const res = await fetch(url, { cache: 'no-store' });
-      if (res.ok) {
-        const data = await res.json();
-        setStations(data.stations || []);
-        setLastRefreshedAt(new Date());
-      }
-    } catch (err) {
-      console.error('Errore snapshot manuale:', err);
-    }
-  }, [showDummyStations]);
 
   // 2. Simulatore continuo (~1 secondo per campionamento Arduino nel DB se attivato manualmente)
   useEffect(() => {
@@ -516,7 +522,7 @@ export default function Dashboard() {
             alignItems: 'center'
           }}>
             <span>Ultimo aggiornamento:</span>
-            <span>{lastRefreshedAt.toLocaleTimeString('it-IT')}</span>
+            <span suppressHydrationWarning>{lastRefreshedAt.toLocaleTimeString('it-IT')}</span>
           </div>
         </aside>
       </div>

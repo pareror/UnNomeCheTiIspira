@@ -398,6 +398,13 @@ async function handleIncomingMessage(msg) {
       }
     }
 
+    const now = Date.now();
+    const cooldownMs = 10 * 60 * 1000;
+    const lastAlert = subscriber.last_alert_at || 0;
+    const isCooldownActive = lastAlert > 0 && (now - lastAlert) < cooldownMs;
+    const remainingMin = isCooldownActive ? Math.ceil((cooldownMs - (now - lastAlert)) / 60000) : 0;
+    const lastAlertText = lastAlert > 0 ? new Date(lastAlert).toLocaleTimeString('it-IT') : 'Nessuna allerta recente';
+
     await sendMessage(
       chatId,
       `📊 <b>STATO DEL MONITORAGGIO ACUSTICO</b>\n\n` +
@@ -407,6 +414,9 @@ async function handleIncomingMessage(msg) {
       `📍 <b>Coordinate:</b> ${subscriber.latitude ? `${subscriber.latitude.toFixed(5)}° N, ${subscriber.longitude.toFixed(5)}° E` : 'Non impostate'}\n` +
       `📏 <b>Raggio Monitorato:</b> <b>${radius} metri</b>\n` +
       `📡 <b>Celle in ascolto nel raggio:</b> <b>${countInRange} stazioni</b>\n` +
+      `🔊 <b>Soglia di Allarme:</b> <b>≥ 70 dB</b>\n` +
+      `⏱️ <b>Anti-Spam:</b> <b>10 minuti di intervallo minimo</b>\n` +
+      `🕒 <b>Ultima Notifica:</b> ${lastAlertText} ${isCooldownActive ? `(⏳ Cooldown attivo: ancora ${remainingMin}m)` : '(Pronto a ricevere)'}\n\n` +
       `🟢 <b>Stato Allerte:</b> <b>ATTIVO</b>`
     );
     return;
@@ -419,11 +429,12 @@ async function handleIncomingMessage(msg) {
     await sendMessage(
       chatId,
       `🚨 <b>TEST ALLERTA RUMORE CRITICO A TORINO</b> 🚨\n\n` +
-      `⚠️ <b>Livello Acustico Simulato:</b> <code>88 dB</code> (ALLARME ROSSO)\n` +
+      `⚠️ <b>Livello Acustico Simulato:</b> <code>75 dB</code> (SOGLIA ≥ 70 dB SUPERATA)\n` +
       `📡 <b>Cella Acustica:</b> <b>Arduino Uno Q Test</b> [<code>ard-uno-q-real-mic</code>]\n` +
       `📍 <b>Distanza dalla tua attività:</b> <b>42 metri</b> (Entro il tuo raggio di ${radius}m)\n` +
       `🏢 <b>Tua Sede:</b> ${addr}\n` +
       `🕒 <b>Rilevamento:</b> ${new Date().toLocaleTimeString('it-IT')}\n\n` +
+      `🛡️ <i>Protezione anti-spam attiva: tra un avviso e l'altro per la tua attività intercorrono almeno 10 minuti.</i>\n` +
       `✅ <i>Questo è un messaggio di test. Il tuo canale di ricezione Telegram funziona perfettamente!</i>`
     );
     return;

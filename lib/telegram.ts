@@ -189,25 +189,27 @@ export function formatNoiseAlertMessage(params: {
 
   return `🚨 <b>ALLERTA RUMORE CRITICO A TORINO</b> 🚨
 
-⚠️ <b>Livello Acustico Rilevato:</b> <code>${params.soundIntensity} dB</code> (SOGLIA DI ALLARME SUPERATA)
+⚠️ <b>Livello Acustico Rilevato:</b> <code>${params.soundIntensity} dB</code> (SOGLIA ≥ 70 dB SUPERATA)
 📡 <b>Cella Acustica:</b> <b>${params.stationName}</b> [<code>${params.stationId}</code>]
 📍 <b>Distanza dalla tua attività:</b> <b>${Math.round(params.distanceMeters)} metri</b> (Entro il tuo raggio di ${params.userRadiusMeters}m)
 🏢 <b>Tua Sede:</b> ${params.userAddress}
 🕒 <b>Rilevamento:</b> ${dateStr} ore ${timeStr}
 
 ${params.customMessage ? `📝 <i>Nota: ${params.customMessage}</i>\n` : ''}
-⚡ <i>Allerta generata automaticamente dal sistema di monitoraggio urbano Torino Noise. Si consiglia di verificare le pertinenze o le emissioni dell'area circostante.</i>`;
+🛡️ <i>Protezione anti-spam attiva: tra un avviso e l'altro per la tua attività intercorrono almeno 10 minuti.</i>
+⚡ <i>Allerta generata automaticamente dal sistema di monitoraggio urbano Torino Noise.</i>`;
 }
 
 /**
  * Elabora una notifica di rumore e la inoltra a tutti gli iscritti la cui attività
- * si trova entro il raggio parametrizzato (default 150m) dalla stazione in allarme.
+ * si trova entro il raggio parametrizzato dalla stazione in allarme.
+ * Include protezione anti-spam rigorosa con intervallo minimo di 10 minuti (600.000 ms).
  */
 export async function dispatchNoiseAlertToSubscribers(params: {
   station: { id: string; name: string; latitude: number; longitude: number };
   soundIntensity: number;
   customMessage?: string;
-  cooldownMs?: number; // Prevenzione spam (default: 45 secondi)
+  cooldownMs?: number; // Prevenzione spam (default: 10 minuti = 600.000 ms)
 }): Promise<{
   notifiedCount: number;
   subscribersEvaluated: number;
@@ -217,11 +219,12 @@ export async function dispatchNoiseAlertToSubscribers(params: {
     distanceMeters: number;
     radiusMeters: number;
     status: 'sent' | 'cooldown' | 'error';
+    cooldownRemainingSec?: number;
     error?: string;
   }>;
 }> {
   const subscribers = getActiveAuthenticatedSubscribers();
-  const cooldown = params.cooldownMs ?? 45_000;
+  const cooldown = params.cooldownMs ?? (10 * 60 * 1000); // 10 minuti di intervallo minimo anti-spam
   const now = Date.now();
 
   const results: Array<any> = [];
@@ -242,14 +245,16 @@ export async function dispatchNoiseAlertToSubscribers(params: {
 
     // Controlla se la stazione rumorosa rientra nel raggio dell'attività
     if (distanceMeters <= radius) {
-      // Verifica anti-spam (cooldown)
+      // Verifica anti-spam: devono passare almeno 10 minuti dall'ultima allerta inviata a questa sede
       if (sub.last_alert_at && (now - sub.last_alert_at) < cooldown) {
+        const remainingSec = Math.ceil((cooldown - (now - sub.last_alert_at)) / 1000);
         results.push({
           chat_id: sub.chat_id,
           address: sub.address || '',
           distanceMeters,
           radiusMeters: radius,
           status: 'cooldown',
+          cooldownRemainingSec: remainingSec,
         });
         continue;
       }

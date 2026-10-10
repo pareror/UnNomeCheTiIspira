@@ -161,7 +161,7 @@ export async function GET() {
         sound_intensity: 'Valore acustico in dB (es. 85)',
       },
       optional_fields: {
-        threshold: 'Soglia minima di dB per allerta (default: 80 dB)',
+        threshold: 'Soglia minima di dB per allerta (default: 70 dB)',
         message: 'Messaggio o descrizione aggiuntiva dell\'evento rumoroso',
       },
     })

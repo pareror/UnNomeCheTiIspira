@@ -5,8 +5,10 @@ import {
   checkRateLimit, 
   applySecurityHeaders 
 } from '@/lib/security';
-import { insertNoiseReading } from '@/lib/db';
+import { insertNoiseReading, getStationById } from '@/lib/db';
 import { processReadingForAlerts } from '@/lib/alerts';
+import { dispatchNoiseAlertToSubscribers } from '@/lib/telegram';
+import { NOISE_ALERT_THRESHOLD_DB, NOISE_ALERT_NOTIFY_COOLDOWN_MS } from '@/lib/constants';
 
 async function parseIncomingPayload(request: NextRequest): Promise<any> {
   const contentType = request.headers.get('content-type') || '';
@@ -116,7 +118,32 @@ export async function POST(request: NextRequest) {
       longitude,
     });
 
-    // 6. Valutazione della soglia di rumore persistente e invio allerte esercenti
+    // 6. Notifica tempestiva via Telegram per gli iscritti nel raggio dell'attività
+    // Soglia: sound_intensity >= 70 dB | Cooldown anti-spam: 10 minuti (600.000 ms)
+    let telegramSubscribersNotified = 0;
+    if (sound_intensity >= NOISE_ALERT_THRESHOLD_DB) {
+      const station = getStationById(station_id);
+      if (station) {
+        try {
+          const subResult = await dispatchNoiseAlertToSubscribers({
+            station: {
+              id: station.id,
+              name: station.name,
+              latitude: station.latitude,
+              longitude: station.longitude,
+            },
+            soundIntensity: sound_intensity,
+            customMessage: 'Rilevamento acustico in tempo reale dal sensore della stazione',
+            cooldownMs: NOISE_ALERT_NOTIFY_COOLDOWN_MS,
+          });
+          telegramSubscribersNotified = subResult.notifiedCount;
+        } catch (err: any) {
+          console.error('[Telemetry] Errore dispatch allerta Telegram iscritti:', err);
+        }
+      }
+    }
+
+    // 7. Valutazione della soglia di rumore persistente e invio allerte esercenti
     const alertResult = await processReadingForAlerts(station_id, sound_intensity, reading.timestamp);
 
     return applySecurityHeaders(
@@ -125,7 +152,8 @@ export async function POST(request: NextRequest) {
           success: true,
           message: 'Dato registrato con successo nel database in tempo reale',
           data: reading,
-          alert_triggered: alertResult.alerted,
+          alert_triggered: alertResult.alerted || telegramSubscribersNotified > 0,
+          telegram_subscribers_notified: telegramSubscribersNotified,
         },
         { status: 201 }
       )

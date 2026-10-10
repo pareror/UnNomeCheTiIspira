@@ -39,9 +39,8 @@ export const FRONTEND_REFRESH_INTERVAL_MS = 60 * 1000;
 // ALLERTA RUMORE PERSISTENTE (ESERCENTI)
 // ==========================================
 
-// Soglia sonora oltre la quale una lettura è considerata "volume elevato" (dB).
-// Valori > 65 dB corrispondono alle bande "Medio", "Forte" e "Critico" (vedi getNoiseLevel).
-export const NOISE_ALERT_THRESHOLD_DB = 65;
+// Soglia sonora oltre la quale scatta l'allerta (dB) - configurata a 70 dB come da richiesta utente
+export const NOISE_ALERT_THRESHOLD_DB = 70;
 
 // Durata minima di rumore elevato e continuativo prima di inviare l'allerta: 10 minuti
 export const NOISE_ALERT_PERSISTENCE_MS = 10 * 60 * 1000;

@@ -237,12 +237,12 @@ export function getStationsLive(filterMode: 'all' | 'live_only' | 'dummy_only' =
     FROM stations s
     LEFT JOIN (
       SELECT station_id, sound_intensity, timestamp
-      FROM noise_readings nr1
-      WHERE timestamp = (
-        SELECT MAX(timestamp) 
-        FROM noise_readings nr2 
-        WHERE nr2.station_id = nr1.station_id
-      )
+      FROM (
+        SELECT station_id, sound_intensity, timestamp,
+               ROW_NUMBER() OVER (PARTITION BY station_id ORDER BY id DESC) as rn
+        FROM noise_readings
+      ) sub
+      WHERE sub.rn = 1
     ) r ON s.id = r.station_id
     ${whereClause}
     ORDER BY s.is_dummy ASC, s.name ASC

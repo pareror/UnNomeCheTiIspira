@@ -28,6 +28,7 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
   const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number>(60);
+  const [isLiveStreamSync, setIsLiveStreamSync] = useState<boolean>(true);
   const [isSimulatingContinuous, setIsSimulatingContinuous] = useState<boolean>(false);
   const [showDummyStations, setShowDummyStations] = useState<boolean>(false);
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
@@ -43,31 +44,39 @@ export default function Dashboard() {
         const data = await res.json();
         setStations(data.stations || []);
         setLastRefreshedAt(new Date());
-        setSecondsUntilRefresh(60); // Reset timer 1 minuto
+        if (!isLiveStreamSync) {
+          setSecondsUntilRefresh(60);
+        }
       }
     } catch (err) {
       console.error('Errore durante il caricamento delle stazioni:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [showDummyStations]);
+  }, [showDummyStations, isLiveStreamSync]);
 
-  // 2. Timer di Auto-refresh ogni 1 minuto (60 secondi)
+  // 2. Timer di Auto-refresh (1 secondo in modalità Live Stream, oppure 60s in modalità standard)
   useEffect(() => {
     fetchStations();
 
-    const timer = setInterval(() => {
-      setSecondsUntilRefresh((prev) => {
-        if (prev <= 1) {
-          fetchStations();
-          return 60;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [fetchStations]);
+    if (isLiveStreamSync) {
+      const liveTimer = setInterval(() => {
+        fetchStations();
+      }, 1000);
+      return () => clearInterval(liveTimer);
+    } else {
+      const standardTimer = setInterval(() => {
+        setSecondsUntilRefresh((prev) => {
+          if (prev <= 1) {
+            fetchStations();
+            return 60;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(standardTimer);
+    }
+  }, [fetchStations, isLiveStreamSync]);
 
   // 3. Simulatore continuo (~1 secondo per campionamento Arduino nel DB)
   useEffect(() => {
@@ -175,6 +184,23 @@ export default function Dashboard() {
           </button>
 
           <button
+            onClick={() => setIsLiveStreamSync(!isLiveStreamSync)}
+            style={{
+              padding: '6px 12px',
+              backgroundColor: isLiveStreamSync ? '#15803d' : '#334155',
+              color: '#ffffff',
+              border: isLiveStreamSync ? '1px solid #4ade80' : '1px solid #64748b',
+              borderRadius: '5px',
+              fontSize: '12px',
+              cursor: 'pointer',
+              fontWeight: 600
+            }}
+            title="Sincronizza automaticamente i decibel ogni secondo per vedere voce e rumori in tempo reale"
+          >
+            {isLiveStreamSync ? '⚡ Sync Live (1s): ATTIVO' : '⏱️ Sync Lento (60s)'}
+          </button>
+
+          <button
             onClick={() => setShowDummyStations(!showDummyStations)}
             style={{
               padding: '6px 12px',
@@ -188,7 +214,7 @@ export default function Dashboard() {
             }}
             title="Oscura o mostra le stazioni pre-generate dummy"
           >
-            {showDummyStations ? '⚪ Modalità: Tutte le Stazioni' : '🟢 Modalità: Solo Stazioni Live (Debug Reale)'}
+            {showDummyStations ? '⚪ Modalità: Tutte le Stazioni' : '🟢 Modalità: Solo Stazione Reale'}
           </button>
 
           <button
@@ -370,8 +396,15 @@ export default function Dashboard() {
                         <div style={{ fontWeight: 600, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {st.name}
                         </div>
-                        <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                          ID: {st.id} • R: {NOISE_RADIUS_METERS}m
+                        <div style={{ fontSize: '11px', color: '#64748b' }}>
+                          ID: <code>{st.id}</code> • Raggio: {NOISE_RADIUS_METERS}m
+                        </div>
+                        <div style={{ fontSize: '10px', marginTop: '3px' }}>
+                          {st.last_reading_time && (Date.now() - st.last_reading_time < 3500) ? (
+                            <span style={{ color: '#16a34a', fontWeight: 600 }}>● Trasmissione attiva in tempo reale</span>
+                          ) : (
+                            <span style={{ color: '#94a3b8' }}>○ In attesa (avvia <code>npm run mic</code>)</span>
+                          )}
                         </div>
                       </div>
 

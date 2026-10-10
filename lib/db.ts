@@ -19,13 +19,14 @@ export function getDb(): Database.Database {
 }
 
 function initializeDatabase(db: Database.Database) {
-  // Tabella Station: stazioni fisiche posizionate a Torino (senza raggio_meters ridondante)
+  // Tabella Station: stazioni fisiche con flag is_dummy per oscuramento controllato
   db.exec(`
     CREATE TABLE IF NOT EXISTS stations (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       latitude REAL NOT NULL,
       longitude REAL NOT NULL,
+      is_dummy INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -41,14 +42,26 @@ function initializeDatabase(db: Database.Database) {
       ON noise_readings(station_id, timestamp DESC);
   `);
 
-  // Seeding iniziale delle stazioni strategiche di Torino se la tabella è vuota
+  // Migrazione retrocompatibile per colonna is_dummy se tabella preesistente
+  try {
+    db.exec(`ALTER TABLE stations ADD COLUMN is_dummy INTEGER NOT NULL DEFAULT 0;`);
+  } catch {
+    // La colonna esiste già
+  }
+
+  // Seleziona se ci sono stazioni registrate
   const count = db.prepare('SELECT count(*) as count FROM stations').get() as { count: number };
   if (count.count === 0) {
     seedInitialStations(db);
+  } else {
+    // Marca le stazioni generate come dummy per consentire l'oscuramento
+    db.exec(`UPDATE stations SET is_dummy = 1 WHERE id LIKE 'ard-to-%';`);
   }
 }
 
-function seedInitialStations(db: Database.Database) {
+// Funzione conservata intatta per creare o ricreare dati dummy quando necessario
+export function seedInitialStations(db?: Database.Database) {
+  const database = db || getDb();
   const initialStations = [
     {
       id: 'ard-to-01',
@@ -108,18 +121,18 @@ function seedInitialStations(db: Database.Database) {
     },
   ];
 
-  const insertStation = db.prepare(`
-    INSERT INTO stations (id, name, latitude, longitude)
-    VALUES (@id, @name, @latitude, @longitude)
+  const insertStation = database.prepare(`
+    INSERT OR REPLACE INTO stations (id, name, latitude, longitude, is_dummy)
+    VALUES (@id, @name, @latitude, @longitude, 1)
   `);
 
-  const insertReading = db.prepare(`
+  const insertReading = database.prepare(`
     INSERT INTO noise_readings (station_id, sound_intensity, timestamp)
     VALUES (@station_id, @sound_intensity, @timestamp)
   `);
 
   const now = Date.now();
-  const transaction = db.transaction(() => {
+  const transaction = database.transaction(() => {
     for (const station of initialStations) {
       insertStation.run({
         id: station.id,
@@ -128,7 +141,6 @@ function seedInitialStations(db: Database.Database) {
         longitude: station.longitude,
       });
 
-      // Inserisci una prima lettura campionaria
       insertReading.run({
         station_id: station.id,
         sound_intensity: station.baseNoise,
@@ -146,6 +158,7 @@ export interface Station {
   name: string;
   latitude: number;
   longitude: number;
+  is_dummy: number;
   created_at: string;
 }
 
@@ -161,28 +174,29 @@ export interface StationLiveStatus extends Station {
   last_reading_time: number | null;
 }
 
-// Inserimento nuova lettura dal sensore Arduino (con auto-registrazione per nodi WiFi nuovi)
+// Inserimento nuova lettura dal sensore Arduino (is_dummy = 0 per hardware live reale)
 export function insertNoiseReading(
   station_id: string, 
   sound_intensity: number, 
   timestamp?: number,
-  stationMeta?: { name?: string; latitude?: number; longitude?: number }
+  stationMeta?: { name?: string; latitude?: number; longitude?: number; is_dummy?: boolean }
 ): NoiseReading {
   const db = getDb();
   const time = timestamp ?? Date.now();
+  const isDummyVal = stationMeta?.is_dummy ? 1 : 0;
 
   // Verifica esistenza stazione: se non esiste ancora, auto-registrazione dinamica
   const stationExists = db.prepare('SELECT id FROM stations WHERE id = ?').get(station_id);
   if (!stationExists) {
-    const name = stationMeta?.name || `Stazione Slave (${station_id})`;
-    // Coordinate fornite oppure posizione nel quadrante urbano di Torino
-    const lat = stationMeta?.latitude ?? (45.0683 + (Math.random() - 0.5) * 0.035);
-    const lng = stationMeta?.longitude ?? (7.6830 + (Math.random() - 0.5) * 0.035);
+    const name = stationMeta?.name || `Stazione Arduino (${station_id})`;
+    // Coordinate fornite dal dispositivo o fallback su Torino centro
+    const lat = stationMeta?.latitude ?? 45.0705;
+    const lng = stationMeta?.longitude ?? 7.6868;
 
     db.prepare(`
-      INSERT INTO stations (id, name, latitude, longitude)
-      VALUES (?, ?, ?, ?)
-    `).run(station_id, name, lat, lng);
+      INSERT INTO stations (id, name, latitude, longitude, is_dummy)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(station_id, name, lat, lng, isDummyVal);
   }
 
   const stmt = db.prepare(`
@@ -199,15 +213,24 @@ export function insertNoiseReading(
   };
 }
 
-// Recupera tutte le stazioni con l'ultima lettura acustica
-export function getStationsLive(): StationLiveStatus[] {
+// Recupera stazioni live con opzione di oscuramento/filtro per stazioni dummy
+export function getStationsLive(filterMode: 'all' | 'live_only' | 'dummy_only' = 'all'): StationLiveStatus[] {
   const db = getDb();
+  
+  let whereClause = '';
+  if (filterMode === 'live_only') {
+    whereClause = 'WHERE s.is_dummy = 0';
+  } else if (filterMode === 'dummy_only') {
+    whereClause = 'WHERE s.is_dummy = 1';
+  }
+
   const query = `
     SELECT 
       s.id,
       s.name,
       s.latitude,
       s.longitude,
+      s.is_dummy,
       s.created_at,
       r.sound_intensity as current_intensity,
       r.timestamp as last_reading_time
@@ -221,7 +244,8 @@ export function getStationsLive(): StationLiveStatus[] {
         WHERE nr2.station_id = nr1.station_id
       )
     ) r ON s.id = r.station_id
-    ORDER BY s.name ASC
+    ${whereClause}
+    ORDER BY s.is_dummy ASC, s.name ASC
   `;
 
   return db.prepare(query).all() as StationLiveStatus[];
@@ -241,7 +265,10 @@ export function getStationHistory(station_id: string, limit: number = 100): Nois
 }
 
 // Elenco stazioni pure
-export function getAllStations(): Station[] {
+export function getAllStations(filterMode: 'all' | 'live_only' | 'dummy_only' = 'all'): Station[] {
   const db = getDb();
-  return db.prepare('SELECT * FROM stations ORDER BY name ASC').all() as Station[];
+  let whereClause = '';
+  if (filterMode === 'live_only') whereClause = 'WHERE is_dummy = 0';
+  else if (filterMode === 'dummy_only') whereClause = 'WHERE is_dummy = 1';
+  return db.prepare(`SELECT * FROM stations ${whereClause} ORDER BY name ASC`).all() as Station[];
 }

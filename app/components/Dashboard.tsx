@@ -29,14 +29,16 @@ export default function Dashboard() {
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
   const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number>(60);
   const [isSimulatingContinuous, setIsSimulatingContinuous] = useState<boolean>(false);
+  const [showDummyStations, setShowDummyStations] = useState<boolean>(false);
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [simMessage, setSimMessage] = useState<string>('');
   const [showArduinoSnippet, setShowArduinoSnippet] = useState<boolean>(false);
 
-  // 1. Fetch stazioni attuali con ultima lettura dal server master Next.js
+  // 1. Fetch stazioni attuali (filtrando o includendo i dati dummy su richiesta)
   const fetchStations = useCallback(async () => {
     try {
-      const res = await fetch('/api/stations', { cache: 'no-store' });
+      const url = showDummyStations ? '/api/stations?filter=all' : '/api/stations?filter=live_only';
+      const res = await fetch(url, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setStations(data.stations || []);
@@ -48,7 +50,7 @@ export default function Dashboard() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [showDummyStations]);
 
   // 2. Timer di Auto-refresh ogni 1 minuto (60 secondi)
   useEffect(() => {
@@ -170,6 +172,23 @@ export default function Dashboard() {
             }}
           >
             Aggiorna Ora
+          </button>
+
+          <button
+            onClick={() => setShowDummyStations(!showDummyStations)}
+            style={{
+              padding: '6px 12px',
+              backgroundColor: showDummyStations ? '#334155' : '#047857',
+              color: '#ffffff',
+              border: showDummyStations ? '1px solid #475569' : '1px solid #10b981',
+              borderRadius: '5px',
+              fontSize: '12px',
+              cursor: 'pointer',
+              fontWeight: 600
+            }}
+            title="Oscura o mostra le stazioni pre-generate dummy"
+          >
+            {showDummyStations ? '⚪ Modalità: Tutte le Stazioni' : '🟢 Modalità: Solo Stazioni Live (Debug Reale)'}
           </button>
 
           <button

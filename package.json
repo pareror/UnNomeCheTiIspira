@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "simulate": "node scripts/simulate_arduino.js"
+    "simulate": "node scripts/simulate_arduino.js",
+    "station": "python scripts/live_microphone_station.py",
+    "mic": "python scripts/live_microphone_station.py"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.22",

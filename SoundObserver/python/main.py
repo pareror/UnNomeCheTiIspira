@@ -87,8 +87,8 @@ DANGER_CLASSES = set(
     )
 )
 
-# Soglia minima di confidenza (0.0 - 1.0) per considerare affidabile l'evento critico
-SAFETY_CONFIDENCE_THRESHOLD = float(os.getenv("SAFETY_CONFIDENCE_THRESHOLD", "0.40"))
+# Soglia minima di confidenza (> 80%) per considerare affidabile l'evento critico e inviare la notifica su Telegram
+SAFETY_CONFIDENCE_THRESHOLD = float(os.getenv("SAFETY_CONFIDENCE_THRESHOLD", "0.80"))
 
 # Flag per forzare l'invio all'API per qualsiasi classificazione (utile per test o simulazioni)
 SEND_ALL_ALERTS = os.getenv("SEND_ALL_ALERTS", "0") in ("1", "true", "True")
@@ -259,6 +259,15 @@ def send_safety_alert(label: str, confidence: float, sound_db: Optional[float] =
     if http_session is None:
         http_session = init_optimized_http_session()
 
+    # Invia la notifica su Telegram SOLO se il livello di confidenza è maggiore dell'80% (> 0.80)
+    if confidence <= SAFETY_CONFIDENCE_THRESHOLD and not SEND_ALL_ALERTS:
+        print(
+            f"[{time.strftime('%H:%M:%S')}] [SAFETY ALERT ANNULLATO] "
+            f"Confidenza {confidence * 100:.1f}% non superiore all'80% (> {int(SAFETY_CONFIDENCE_THRESHOLD * 100)}%), "
+            f"nessuna notifica inviata su Telegram."
+        )
+        return False
+
     clean_label = (label or "other").strip().lower()
     if clean_label in {"scream", "gunshot", "siren", "impact_crash"}:
         event_type = clean_label
@@ -360,17 +369,22 @@ def loop():
             label, confidence = classify_file(AUDIONAME)
             print(f"[{time.strftime('%H:%M:%S')}] \033[36m[ML Edge]\033[0m Classe: '{label}' | Confidenza: {confidence:.2f} ({confidence * 100:.1f}%)")
 
-            # Invio allerta di sicurezza al Server Master / Telegram se evento critico
+            # Invio allerta di sicurezza al Server Master / Telegram SOLO se evento critico e confidenza > 80%
             clean_label = (label or "").strip().lower()
-            is_danger = (clean_label in DANGER_CLASSES and confidence >= SAFETY_CONFIDENCE_THRESHOLD) or SEND_ALL_ALERTS
-            if is_danger:
-                print(
-                    f"[{time.strftime('%H:%M:%S')}] \033[31m[!] CRITICITÀ RILEVATA: '{label.upper()}' "
-                    f"({confidence * 100:.1f}%)\033[0m -> Invio ad API Safety per notifica Telegram..."
-                )
-                send_safety_alert(clean_label, confidence, sound_db=livello)
+            if clean_label in DANGER_CLASSES or SEND_ALL_ALERTS:
+                if confidence > SAFETY_CONFIDENCE_THRESHOLD or SEND_ALL_ALERTS:
+                    print(
+                        f"[{time.strftime('%H:%M:%S')}] \033[31m[!] CRITICITÀ RILEVATA: '{label.upper()}' "
+                        f"({confidence * 100:.1f}% > {int(SAFETY_CONFIDENCE_THRESHOLD * 100)}%)\033[0m -> Invio ad API Safety per notifica Telegram..."
+                    )
+                    send_safety_alert(clean_label, confidence, sound_db=livello)
+                else:
+                    print(
+                        f"[{time.strftime('%H:%M:%S')}] [ML Edge] Evento '{label}' rilevato ma confidenza insufficiente "
+                        f"({confidence * 100:.1f}% <= {int(SAFETY_CONFIDENCE_THRESHOLD * 100)}%). Nessuna notifica Telegram inviata."
+                    )
             else:
-                print(f"[{time.strftime('%H:%M:%S')}] [ML Edge] Evento non critico ({label}: {confidence * 100:.1f}%), nessuna notifica Telegram richiesta.")
+                print(f"[{time.strftime('%H:%M:%S')}] [ML Edge] Evento ordinario ({label}: {confidence * 100:.1f}%), nessuna notifica Telegram richiesta.")
         except Exception as e:
             print(f"[!] Errore durante classificazione ML o invio allerta: {e}")
 

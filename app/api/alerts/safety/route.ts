@@ -76,6 +76,19 @@ export async function POST(request: NextRequest) {
 
   const { station_id, event_type, confidence, message, name, latitude, longitude } = validation.data;
 
+  // 4.1. Soglia minima di confidenza: invia la notifica su Telegram SOLO se confidenza > 80% (> 0.80)
+  if (confidence != null && confidence <= 0.80) {
+    return applySecurityHeaders(
+      NextResponse.json({
+        success: true,
+        alert_triggered: false,
+        message: `Notifica Telegram ignorata: livello di confidenza (${(confidence * 100).toFixed(1)}%) non superiore alla soglia richiesta dell'80%.`,
+        confidence,
+        required_min_confidence: 0.80,
+      })
+    );
+  }
+
   // 5. Freschezza temporale: un evento di pericolo deve essere recente
   const now = Date.now();
   const eventTime = validation.data.timestamp ?? now;

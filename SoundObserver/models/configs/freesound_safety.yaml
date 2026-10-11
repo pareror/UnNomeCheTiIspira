@@ -1,0 +1,65 @@
+# Clean, license-tracked urban safety dataset sourced from Freesound.
+#
+# Every clip is downloaded with its license + author recorded, so the dataset is
+# safe to use where a cash prize / non-commercial restriction would rule out
+# UrbanSound8K and ESC-50 (both CC BY-NC 3.0).
+#
+# License filter: only CC0 and CC-BY. CC0 needs no attribution (we still record
+# it); CC-BY requires attribution, which is emitted into attribution.csv/.md.
+licenses:
+  - Creative Commons 0
+  - Attribution
+
+# How folds are grouped so train/val/test never share a recording.
+#   recording      -> one Freesound sound = one group (guarantees every class
+#                     appears in every fold; near-duplicate re-uploads are still
+#                     caught by content dedup)
+#   uploader       -> everything by the same author is one group (all classes)
+#   uploader_class -> same author within the same class is one group
+group_by: recording
+
+n_folds: 10
+test_fold: 10
+seed: 42
+
+max_per_class: 120
+min_duration: 1.0
+max_duration: 30.0
+page_size: 150
+max_search_pages: 4
+# seconds to sleep between Freesound requests (be polite; search limit ~60/min)
+request_delay: 0.15
+
+classes:
+  # --- safety classes (the demo hook) ---
+  scream:
+    safety: 1.0
+    window_hop_seconds: 0.5
+    queries: [scream, screaming, "woman screaming", "man screaming", shout, yell, "cry for help", "distress scream"]
+  gunshot:
+    safety: 1.0
+    queries: [gunshot, "gun shot", gunfire, pistol, "rifle shot", gun]
+  # --- urban / alert classes ---
+  siren:
+    safety: 0.0
+    queries: [siren, "police siren", "ambulance siren", "emergency siren", "fire truck siren"]
+  car_horn:
+    safety: 0.0
+    queries: ["car horn", "car honk", "horn honk", "vehicle horn", "truck horn"]
+  construction:
+    safety: 0.0
+    queries: [jackhammer, drilling, "construction site", "pneumatic drill", "concrete drill", roadwork]
+  traffic:
+    safety: 0.0
+    queries: [traffic, "car engine", "engine idling", "traffic noise", "road traffic", "passing cars"]
+  # --- normative / background classes (hard negatives) ---
+  speech:
+    safety: 0.0
+    queries: [speech, talking, conversation, "human voice", "people talking", chatter]
+  ambient_quiet:
+    safety: 0.0
+    queries: [ambient, "room tone", crickets, wind, rain, "quiet ambience", "background noise"]
+
+# anomaly experiment grouping (normal-only detectors vs anomalous machinery/alert)
+normal_classes: [speech, ambient_quiet, traffic]
+anomalous_classes: [siren, car_horn, construction]

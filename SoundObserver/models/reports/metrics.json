@@ -1,0 +1,144 @@
+{
+  "meta": "urban_safety, 1s windows, log-mel 40x49, seed=0, max_epochs=3, patience=10, val_frac=0.1",
+  "classifier": {
+    "params": 13802,
+    "window_accuracy": 0.45,
+    "window_macro_f1": 0.3688878339510352,
+    "clip_accuracy": 0.41904761904761906,
+    "clip_macro_f1": 0.38687052598817306,
+    "confusion_matrix": [
+      [
+        7,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        2,
+        0,
+        0,
+        0,
+        9,
+        0
+      ],
+      [
+        0,
+        0,
+        5,
+        4,
+        2,
+        0,
+        4,
+        0,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        8,
+        0,
+        0,
+        6,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0,
+        9,
+        4,
+        0,
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        0,
+        0,
+        1,
+        1,
+        6,
+        1,
+        0,
+        2
+      ],
+      [
+        0,
+        0,
+        0,
+        4,
+        0,
+        0,
+        12,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        8,
+        1,
+        0,
+        3,
+        0,
+        2
+      ]
+    ],
+    "class_names": [
+      "scream",
+      "gunshot",
+      "siren",
+      "traffic",
+      "speech",
+      "car_horn",
+      "construction",
+      "impact_crash",
+      "ambient_quiet"
+    ],
+    "test_fold": 10,
+    "n_test_clips": 105,
+    "epochs_run": 3,
+    "best_epoch": 3,
+    "best_val_loss": 1.3394782543182373
+  },
+  "anomaly": {
+    "detectors": {
+      "gaussian_mahalanobis": 0.7526446953514393,
+      "knn_feature_bank": 0.8089207608585088,
+      "autoencoder_recon": 0.7194334248804801
+    },
+    "best_detector": "knn_feature_bank",
+    "best_auroc": 0.8089207608585088,
+    "ae_params": 4801,
+    "ae_epochs_run": 3,
+    "ae_best_epoch": 3,
+    "n_normal_test": 174,
+    "n_anomalous_test": 226,
+    "normal_group": "normal",
+    "anomalous_group": "anomalous",
+    "test_fold": 10
+  }
+}

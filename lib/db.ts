@@ -205,6 +205,18 @@ function initializeDatabase(db: Database.Database) {
     // La colonna esiste già
   }
 
+  // Rimozione retrocompatibile di latitudine e longitudine dalla tabella delle letture (noise_readings) se presenti
+  try {
+    db.exec(`ALTER TABLE noise_readings DROP COLUMN latitude;`);
+  } catch {
+    // Non presente
+  }
+  try {
+    db.exec(`ALTER TABLE noise_readings DROP COLUMN longitude;`);
+  } catch {
+    // Non presente
+  }
+
   // Seleziona se ci sono stazioni dummy registrate; se mancano, inizializzale
   const dummyCount = db.prepare("SELECT count(*) as count FROM stations WHERE is_dummy = 1 OR id LIKE 'ard-to-%'").get() as { count: number };
   if (dummyCount.count === 0) {

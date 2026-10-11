@@ -1,0 +1,26 @@
+[project]
+name = "urban-acoustic-uno-q"
+version = "0.1.0"
+description = "Real-time urban-noise / safety audio classifier for the Arduino UNO Q (Qualcomm Linux side, STM32 signalling over the Bridge)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "onnxruntime>=1.18",
+]
+
+[project.optional-dependencies]
+# USB microphone / sound-card capture (edge.audio.MicSource)
+mic = ["sounddevice>=0.4"]
+# Higher-quality resampling for non-16 kHz WAVs (otherwise a linear fallback is used)
+resample = ["scipy>=1.11"]
+# Alternative inference backend for .tflite models (edge.engine._TfliteBackend)
+tflite = ["ai-edge-litert>=1.0"]
+# tools/build_test_sounds.py: curate the pitch demo set from labeled clips
+tools = ["soundfile>=0.12", "scipy>=1.11"]
+
+[tool.uv]
+# Not a distributable package: python/ holds entry scripts, edge/ is a local package.
+# Run scripts with the project environment, e.g.:
+#   uv run python/python/live_monitor.py --model-dir model
+package = false

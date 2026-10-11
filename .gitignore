@@ -40,5 +40,5 @@ yarn-error.log*
 
 __pycache__
 artifacts/
-models/data/
+SoundObserver/models/data/
 *.tsbuildinfo

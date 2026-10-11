@@ -1,0 +1,22 @@
+{
+  "class_names": [
+    "scream",
+    "gunshot",
+    "siren",
+    "traffic",
+    "speech",
+    "car_horn",
+    "construction",
+    "impact_crash",
+    "ambient_quiet"
+  ],
+  "n_urban": 9,
+  "embedding_dim": 64,
+  "frames": 49,
+  "n_mels": 40,
+  "win_seconds": 1.0,
+  "norm_mean": -2.162480592727661,
+  "norm_std": 4.804100513458252,
+  "version": "31",
+  "params": 13802
+}

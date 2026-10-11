@@ -1,0 +1,101 @@
+{
+  "scream": {
+    "path": "models\\data\\raw_screams\\maleScream-021.wav",
+    "class_name": "scream",
+    "fold": 10,
+    "pred": "scream",
+    "confidence": 0.9950940012931824,
+    "safety_prob": 0.9895812157543435,
+    "held_out": true,
+    "is_safety": true,
+    "output": "scream.wav"
+  },
+  "gunshot": {
+    "path": "models\\data\\urbansound8k\\UrbanSound8K\\audio\\fold10\\157207-6-6-0.wav",
+    "class_name": "gunshot",
+    "fold": 10,
+    "pred": "gunshot",
+    "confidence": 0.9978681802749634,
+    "safety_prob": 0.995706529779581,
+    "held_out": true,
+    "is_safety": true,
+    "output": "gunshot.wav"
+  },
+  "siren": {
+    "path": "models\\data\\urbansound8k\\UrbanSound8K\\audio\\fold10\\159742-8-0-2.wav",
+    "class_name": "siren",
+    "fold": 10,
+    "pred": "siren",
+    "confidence": 0.9782096147537231,
+    "safety_prob": 7.525506325791192e-07,
+    "held_out": true,
+    "is_safety": false,
+    "output": "siren.wav"
+  },
+  "traffic": {
+    "path": "models\\data\\urbansound8k\\UrbanSound8K\\audio\\fold10\\39847-5-0-11.wav",
+    "class_name": "traffic",
+    "fold": 10,
+    "pred": "traffic",
+    "confidence": 0.961615264415741,
+    "safety_prob": 0.0002527953708963953,
+    "held_out": true,
+    "is_safety": false,
+    "output": "traffic.wav"
+  },
+  "speech": {
+    "path": "models\\data\\urbansound8k\\UrbanSound8K\\audio\\fold10\\101382-2-0-20.wav",
+    "class_name": "speech",
+    "fold": 10,
+    "pred": "speech",
+    "confidence": 0.9526156187057495,
+    "safety_prob": 0.06753046183388921,
+    "held_out": true,
+    "is_safety": false,
+    "output": "speech.wav"
+  },
+  "car_horn": {
+    "path": "models\\data\\urbansound8k\\UrbanSound8K\\audio\\fold10\\100648-1-3-0.wav",
+    "class_name": "car_horn",
+    "fold": 10,
+    "pred": "car_horn",
+    "confidence": 0.9939107894897461,
+    "safety_prob": 1.2555928930522142e-05,
+    "held_out": true,
+    "is_safety": false,
+    "output": "car_horn.wav"
+  },
+  "construction": {
+    "path": "models\\data\\urbansound8k\\UrbanSound8K\\audio\\fold10\\180127-4-0-21.wav",
+    "class_name": "construction",
+    "fold": 10,
+    "pred": "construction",
+    "confidence": 0.9841551184654236,
+    "safety_prob": 9.781037067039242e-05,
+    "held_out": true,
+    "is_safety": false,
+    "output": "construction.wav"
+  },
+  "impact_crash": {
+    "path": "models\\data\\esc50\\ESC-50-master\\audio\\3-180147-A-30.wav",
+    "class_name": "impact_crash",
+    "fold": 3,
+    "pred": "impact_crash",
+    "confidence": 0.9508634805679321,
+    "safety_prob": 0.027616423160883925,
+    "held_out": false,
+    "is_safety": false,
+    "output": "impact_crash.wav"
+  },
+  "ambient_quiet": {
+    "path": "models\\data\\urbansound8k\\UrbanSound8K\\audio\\fold10\\189982-0-0-44.wav",
+    "class_name": "ambient_quiet",
+    "fold": 10,
+    "pred": "ambient_quiet",
+    "confidence": 0.6573019027709961,
+    "safety_prob": 0.002869368040642916,
+    "held_out": true,
+    "is_safety": false,
+    "output": "ambient_quiet.wav"
+  }
+}

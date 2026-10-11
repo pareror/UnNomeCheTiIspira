@@ -1,0 +1,42 @@
+features:
+  sample_rate: 16000
+  n_fft: 512
+  win_length: 400
+  hop_length: 320
+  n_mels: 40
+  target_frames: 49
+
+model:
+  n_urban: 9
+  dropout: 0.2
+  embedding_dim: 64
+
+training:
+  batch_size: 32
+  epochs: 30
+  lr: 0.001
+
+anomaly:
+  method: knn          # rolling_stats | knn | autoencoder
+  knn_k: 5
+  calibration_seconds: 300
+
+decision:
+  anomaly_on: 0.6
+  anomaly_off: 0.4
+  safety_threshold: 0.7
+  smooth_window: 3
+
+classes:
+  urban:               # 9-class urban safety taxonomy
+    - scream
+    - gunshot
+    - siren
+    - traffic
+    - speech
+    - car_horn
+    - construction
+    - impact_crash
+    - ambient_quiet
+  safety:
+    - scream

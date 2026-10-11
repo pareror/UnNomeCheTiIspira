@@ -19,7 +19,8 @@ const STATIONS = [
 ];
 
 console.log('========================================================');
-console.log(' AVVIO SIMULATORE ARDUINO SLAVE (Frequenza ~1 secondo)');
+console.log(' AVVIO SIMULATORE ARDUINO SLAVE (Solo stazioni dummy/fittizie)');
+console.log(' NOTA: Le stazioni reali (Arduino fisico e microfono PC) sono ESCLUSE.');
 console.log(` Target Server Master: ${API_URL}`);
 console.log(` Stazioni attive in simulazione: ${STATIONS.length}`);
 console.log('========================================================');
@@ -32,9 +33,6 @@ async function sendReading(station) {
 
   const payload = {
     station_id: station.id,
-    name: station.name,
-    latitude: station.lat,
-    longitude: station.lon,
     sound_intensity: soundIntensity, // unsigned int
     timestamp: Date.now(),
   };

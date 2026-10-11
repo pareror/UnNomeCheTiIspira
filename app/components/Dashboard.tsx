@@ -133,22 +133,23 @@ export default function Dashboard() {
     return () => clearInterval(simInterval);
   }, [isSimulatingContinuous, showDummyStations]);
 
-  // Trigger manuale di un singolo impulso dummy
+  // Trigger manuale di un singolo impulso dummy (solo stazioni dummy, mai hardware reale o microfono PC)
   const triggerSingleSimulation = async () => {
     if (!showDummyStations) {
       setShowDummyStations(true);
     }
-    setSimMessage('Invio dati campionari Arduino in corso...');
+    setSimMessage('Generazione dati simulati per stazioni dummy in corso...');
     try {
       const res = await fetch('/api/simulator', { method: 'POST' });
       if (res.ok) {
-        setSimMessage('Dati campionari acquisiti e memorizzati!');
+        const data = await res.json();
+        setSimMessage(data.message || 'Dati simulati generati (stazioni hardware reali escluse)!');
         await fetchStationsSnapshot();
       }
     } catch {
       setSimMessage('Errore durante la simulazione.');
     }
-    setTimeout(() => setSimMessage(''), 3000);
+    setTimeout(() => setSimMessage(''), 4000);
   };
 
   // Statistiche rapide
@@ -362,7 +363,11 @@ export default function Dashboard() {
         
         {/* MAPPA DI TORINO A TUTTO SCHERMO */}
         <div style={{ flex: 1, height: '100%', position: 'relative' }}>
-          <DynamicNoiseMap stations={stations} selectedStationId={selectedStationId} />
+          <DynamicNoiseMap 
+            stations={stations} 
+            selectedStationId={selectedStationId} 
+            onSelectStation={setSelectedStationId} 
+          />
 
           {/* LEGENDA COLORI FLUTTUANTE SULLA MAPPA */}
           <div style={{
@@ -442,8 +447,34 @@ export default function Dashboard() {
 
           {/* LISTA STAZIONI SLAVE */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 600, color: '#64748b', marginBottom: '8px' }}>
-              Nodi Sensore Arduino ({stations.length})
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: '#64748b' }}>
+                Nodi Sensore Arduino ({stations.length})
+              </div>
+              {selectedStationId && (
+                <button
+                  type="button"
+                  id="btn-deselect-station"
+                  onClick={() => setSelectedStationId(null)}
+                  style={{
+                    fontSize: '11px',
+                    color: '#2563eb',
+                    backgroundColor: '#eff6ff',
+                    border: '1px solid #bfdbfe',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    transition: 'all 0.15s ease'
+                  }}
+                  title="Deseleziona la stazione attiva e ripristina la visualizzazione globale"
+                >
+                  ✕ Deseleziona
+                </button>
+              )}
             </div>
 
             {isLoading ? (
@@ -456,7 +487,8 @@ export default function Dashboard() {
                   return (
                     <div
                       key={st.id}
-                      onClick={() => setSelectedStationId(st.id)}
+                      onClick={() => setSelectedStationId((prev) => (prev === st.id ? null : st.id))}
+                      title={isSelected ? 'Clicca per deselezionare questa stazione' : 'Clicca per visualizzare questa stazione sulla mappa'}
                       style={{
                         backgroundColor: isSelected ? '#eff6ff' : '#ffffff',
                         border: isSelected ? '2px solid #2563eb' : '1px solid #e2e8f0',
@@ -467,10 +499,17 @@ export default function Dashboard() {
                         justifyContent: 'space-between',
                         fontSize: '12px',
                         cursor: 'pointer',
+                        boxShadow: isSelected ? '0 2px 6px rgba(37, 99, 235, 0.15)' : 'none',
                         transition: 'all 0.15s ease-in-out'
                       }}
                     >
                       <div style={{ maxWidth: '185px' }}>
+                        {isSelected && (
+                          <div style={{ fontSize: '10px', color: '#2563eb', fontWeight: 700, marginBottom: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span>● Selezionata</span>
+                            <span style={{ fontSize: '9px', color: '#64748b', fontWeight: 500 }}>(clicca per deselezionare)</span>
+                          </div>
+                        )}
                         <div style={{ fontWeight: 600, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {st.name}
                         </div>

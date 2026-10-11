@@ -110,8 +110,7 @@ void loop() {
       httpClient.addHeader("Connection", "keep-alive");
 
       String jsonPayload = "{\"station_id\":\"" + String(STATION_ID) +
-                           "\",\"sound_intensity\":" + String(packet.soundIntensity) +
-                           ",\"name\":\"" + String(STATION_NAME) + "\"}";
+                           "\",\"sound_intensity\":" + String(packet.soundIntensity) + "}";
 
       int httpResponseCode = httpClient.POST(jsonPayload);
 

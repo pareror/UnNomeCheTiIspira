@@ -57,6 +57,11 @@ export const MAX_ALERT_EVENT_AGE_MS = 2 * 60 * 1000;
 // Raggio attorno alla stazione entro cui gli esercenti sono considerati "limitrofi" e allertati
 export const COMPANY_ALERT_RADIUS_METERS = 200;
 
+// Intervallo minimo tra due allerte di PERICOLO (scream/gunshot) verso lo stesso
+// destinatario (anti-spam): default 5 minuti, override con SAFETY_ALERT_COOLDOWN_MINUTES
+export const SAFETY_ALERT_NOTIFY_COOLDOWN_MS =
+  (Number(process.env.SAFETY_ALERT_COOLDOWN_MINUTES) || 5) * 60 * 1000;
+
 // Scala cromatica del rumore secondo le specifiche:
 // - Poco o nessun rumore: Bianco
 // - Rumore lieve: Verde

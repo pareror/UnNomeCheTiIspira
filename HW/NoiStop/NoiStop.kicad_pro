@@ -502,7 +502,7 @@
     "pinned_symbol_libs": []
   },
   "meta": {
-    "filename": "SoundObserverHW.kicad_pro",
+    "filename": "NoiStop.kicad_pro",
     "version": 3
   },
   "net_settings": {
@@ -670,8 +670,8 @@
     "subpart_id_separator": 0,
     "top_level_sheets": [
       {
-        "filename": "SoundObserverHW.kicad_sch",
-        "name": "SoundObserverHW",
+        "filename": "NoiStop.kicad_sch",
+        "name": "NoiStop",
         "uuid": "6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
       }
     ],
@@ -681,7 +681,7 @@
   "sheets": [
     [
       "6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9",
-      "SoundObserverHW"
+      "NoiStop"
     ]
   ],
   "text_variables": {},

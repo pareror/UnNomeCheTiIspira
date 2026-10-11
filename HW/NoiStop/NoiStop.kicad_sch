@@ -2441,16 +2441,6 @@
 	)
 	(wire
 		(pts
-			(xy 60.96 62.23) (xy 63.5 62.23)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "5f44ef91-cba7-452d-8942-e11f9d01849a")
-	)
-	(wire
-		(pts
 			(xy 232.41 109.22) (xy 224.79 109.22)
 		)
 		(stroke
@@ -2591,6 +2581,16 @@
 	)
 	(wire
 		(pts
+			(xy 93.98 54.61) (xy 93.98 62.23)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "cabc64e4-affa-4164-b8c5-768391d2cb69")
+	)
+	(wire
+		(pts
 			(xy 115.57 73.66) (xy 102.87 73.66)
 		)
 		(stroke
@@ -2598,6 +2598,26 @@
 			(type default)
 		)
 		(uuid "d2aa28c0-aa79-4bcd-a843-5f864b703ae8")
+	)
+	(wire
+		(pts
+			(xy 62.23 52.07) (xy 62.23 62.23)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d6cc3764-efef-4a41-bbc7-56961f03ac67")
+	)
+	(wire
+		(pts
+			(xy 62.23 62.23) (xy 63.5 62.23)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d743b235-1394-4888-be0b-5bd5b89e47d2")
 	)
 	(wire
 		(pts
@@ -2618,6 +2638,26 @@
 			(type default)
 		)
 		(uuid "f56c678a-110a-44d8-aa19-65775978dad4")
+	)
+	(label "230V AC"
+		(at 62.23 62.23 180)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right bottom)
+		)
+		(uuid "b2c76df6-7582-473b-b52c-4cc2e97e3852")
+	)
+	(label "3.3V DC 1A"
+		(at 93.98 62.23 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "ea4ea98b-4388-40ac-af30-315a929d4609")
 	)
 	(symbol
 		(lib_id "power:GND")
@@ -2689,7 +2729,7 @@
 			(uuid "7f0b5ebf-0c70-4a84-838e-08757768b3ce")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR011")
 					(unit 1)
@@ -2912,7 +2952,7 @@
 			(uuid "a7750328-40c7-4e20-8302-d394f5d5541d")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "MK1")
 					(unit 1)
@@ -2922,7 +2962,7 @@
 	)
 	(symbol
 		(lib_id "MyPads:RECT_PAD_4x2")
-		(at 60.96 59.69 0)
+		(at 62.23 49.53 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -2933,7 +2973,7 @@
 		(fields_autoplaced yes)
 		(uuid "15340ce4-3c0b-434d-8397-340050b9f5ad")
 		(property "Reference" "J1"
-			(at 64.77 58.4199 0)
+			(at 66.04 48.2599 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -2944,7 +2984,7 @@
 			)
 		)
 		(property "Value" ""
-			(at 60.96 59.69 0)
+			(at 62.23 49.53 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -2954,7 +2994,7 @@
 			)
 		)
 		(property "Footprint" "MyPads:RECT_PAD_4X2"
-			(at 60.96 59.69 0)
+			(at 62.23 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -2965,7 +3005,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 60.96 59.69 0)
+			(at 62.23 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -2976,7 +3016,7 @@
 			)
 		)
 		(property "Description" "rect. pad 4x2 mm"
-			(at 60.96 59.69 0)
+			(at 62.23 49.53 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -2990,7 +3030,7 @@
 			(uuid "9661c1ee-2fd0-4e5b-9056-493abb19a730")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "J1")
 					(unit 1)
@@ -3069,7 +3109,7 @@
 			(uuid "cf1ca77d-6231-4702-8179-16708039d654")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR014")
 					(unit 1)
@@ -3147,7 +3187,7 @@
 			(uuid "736b0fc2-e885-4c94-b08b-e3b85ed5e373")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR07")
 					(unit 1)
@@ -3229,7 +3269,7 @@
 			(uuid "54e01727-2920-4346-9ef3-910720e2fe19")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "C4")
 					(unit 1)
@@ -3311,7 +3351,7 @@
 			(uuid "009a11ea-fdfd-44e4-bfb3-8fc78e66e0a4")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "R2")
 					(unit 1)
@@ -3389,7 +3429,7 @@
 			(uuid "5d6ab2bf-ce0d-4c60-bfde-fe80cb0c6840")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR01")
 					(unit 1)
@@ -3467,7 +3507,7 @@
 			(uuid "63c0b5e1-86e2-43fc-bd0d-1ea6942d0daa")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "J2")
 					(unit 1)
@@ -3545,7 +3585,7 @@
 			(uuid "786c6907-ada9-41a2-8115-d684437b02d3")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR05")
 					(unit 1)
@@ -3623,7 +3663,7 @@
 			(uuid "20938034-26d3-4e67-aa6c-de74f5dc3b66")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR09")
 					(unit 1)
@@ -3633,7 +3673,7 @@
 	)
 	(symbol
 		(lib_id "power:VDD")
-		(at 93.98 62.23 0)
+		(at 93.98 54.61 0)
 		(unit 1)
 		(body_style 1)
 		(exclude_from_sim no)
@@ -3644,7 +3684,7 @@
 		(fields_autoplaced yes)
 		(uuid "55bd5cd1-abd4-458d-8ddb-03e80d121274")
 		(property "Reference" "#PWR03"
-			(at 93.98 66.04 0)
+			(at 93.98 58.42 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3655,7 +3695,7 @@
 			)
 		)
 		(property "Value" "VDD"
-			(at 93.98 57.15 0)
+			(at 93.98 49.53 0)
 			(show_name no)
 			(do_not_autoplace no)
 			(effects
@@ -3665,7 +3705,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 93.98 62.23 0)
+			(at 93.98 54.61 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3676,7 +3716,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 93.98 62.23 0)
+			(at 93.98 54.61 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3687,7 +3727,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"VDD\""
-			(at 93.98 62.23 0)
+			(at 93.98 54.61 0)
 			(hide yes)
 			(show_name no)
 			(do_not_autoplace no)
@@ -3701,7 +3741,7 @@
 			(uuid "8d9cd3d9-41e3-49d7-b50b-bbc088675b9d")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR03")
 					(unit 1)
@@ -3779,7 +3819,7 @@
 			(uuid "941634cf-a464-49b1-aa12-9e70858a81f2")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR06")
 					(unit 1)
@@ -3858,7 +3898,7 @@
 			(uuid "a3fff0e9-8ce9-4a90-829c-c7a1364d2a1b")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "J3")
 					(unit 1)
@@ -3937,9 +3977,88 @@
 			(uuid "dbc959b2-14a5-4c93-bf19-fff67e24df08")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "J4")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:VDD")
+		(at 241.3 86.36 90)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "7afec9cd-fe36-4bf7-8efa-672d2bb78f1d")
+		(property "Reference" "#PWR012"
+			(at 245.11 86.36 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "VDD"
+			(at 237.49 86.3599 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" ""
+			(at 241.3 86.36 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 241.3 86.36 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"VDD\""
+			(at 241.3 86.36 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "7f5aedd3-5f4c-4e9e-bd3b-0e6eb39666ab")
+		)
+		(instances
+			(project "NoiStop"
+				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
+					(reference "#PWR012")
 					(unit 1)
 				)
 			)
@@ -4016,7 +4135,7 @@
 			(uuid "b4addfae-3680-4a77-ba56-56ae108bcf3f")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "J5")
 					(unit 1)
@@ -4098,9 +4217,88 @@
 			(uuid "c2a2203a-9551-4457-a9c0-d54d0d4e062a")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "C2")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "MyPads:CIRC_PAD_0.7X0.3")
+		(at 246.38 86.36 270)
+		(unit 1)
+		(body_style 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(in_pos_files yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "8ddb7130-f999-4c5b-8274-d33df653562d")
+		(property "Reference" "J6"
+			(at 250.19 85.0899 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Value" "VDD"
+			(at 250.19 87.6299 90)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify left)
+			)
+		)
+		(property "Footprint" "MyPads:CIRC_PAD_0.7x0.3"
+			(at 245.11 86.36 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Datasheet" ""
+			(at 245.11 86.36 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Description" "circular pad 0.7mm diam | 0.3mm hole"
+			(at 246.38 86.36 0)
+			(hide yes)
+			(show_name no)
+			(do_not_autoplace no)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(pin "1"
+			(uuid "a68c3226-5dc4-401b-bcc8-9688a1e154bc")
+		)
+		(instances
+			(project "NoiStop"
+				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
+					(reference "J6")
 					(unit 1)
 				)
 			)
@@ -4180,7 +4378,7 @@
 			(uuid "e49ed2b1-6ac0-4b5d-a715-ed6a368dae00")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "C3")
 					(unit 1)
@@ -4258,7 +4456,7 @@
 			(uuid "be932f08-8808-4c8d-af01-811c21ac1dcf")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR010")
 					(unit 1)
@@ -4337,7 +4535,7 @@
 			(uuid "92362c84-c1a5-45fb-af0d-a40a1e8faef0")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR015")
 					(unit 1)
@@ -4419,7 +4617,7 @@
 			(uuid "f5ca294f-a85e-4637-95cb-931eb488f94a")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "C1")
 					(unit 1)
@@ -4612,7 +4810,7 @@
 			(uuid "40ef311c-89fd-47b4-9e57-868af6e6b820")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "U1")
 					(unit 1)
@@ -4832,7 +5030,7 @@
 			(uuid "28761bac-7529-41af-b396-f37197d2d4ba")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "PS1")
 					(unit 1)
@@ -4910,7 +5108,7 @@
 			(uuid "5b96729d-e0c7-4e1d-9c3b-d077bf599dea")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR08")
 					(unit 1)
@@ -4989,7 +5187,7 @@
 			(uuid "48d2dba5-8b19-4455-bf3f-f75f839c03dd")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR04")
 					(unit 1)
@@ -5067,7 +5265,7 @@
 			(uuid "daac1b1f-0320-4bb6-b217-967499cd16e0")
 		)
 		(instances
-			(project "SoundObserverHW"
+			(project "NoiStop"
 				(path "/6fd3b7e4-b6a3-4e40-90f5-3c8d930f02f9"
 					(reference "#PWR02")
 					(unit 1)

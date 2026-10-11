@@ -3,4 +3,5 @@ profiles:
     platforms:
       - platform: arduino:zephyr
     libraries:
+      - U8g2
 default_profile: default

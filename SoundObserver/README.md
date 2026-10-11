@@ -129,11 +129,34 @@ Options / environment variables:
 | — | `EDGE_BG_MARGIN` | `8` | mic: dB above the noise floor to accept a window (`0` disables) |
 | — | `EDGE_MIN_CONFIDENCE` | `0.6` | below this the class is reported as `uncertain` |
 | — | `EDGE_USE_BRIDGE` | `1` | set `0` to skip Bridge/LED calls |
+| — | `EDGE_SERVER_URL` | `http://192.168.22.103:3000` | master server base URL (danger-event POSTs) |
+| — | `STATION_ID` | `ard-uno-q-real` | station id registered on the server |
+| — | `STATION_NAME` | `Arduino Uno Q (Stazione Hardware)` | station display name |
+| — | `LATITUDE` / `LONGITUDE` | `45.0566` / `7.6812` | station coordinates (radius filtering) |
+| — | `SENSOR_API_KEY` | `arduino-torino-noise-secret-2026` | server sensor key (`x-api-key`) |
+| — | `EDGE_REPORT_SAFETY` | `1` | set `0` to disable danger-event reporting |
 
 Audio input defaults to `mic` (the 3.5 mm jack / USB sound card exposed to ALSA,
 captured through `sounddevice`). List the inputs with `python/live_monitor.py
 --list-devices` and select one with `--device`/`EDGE_DEVICE` if the default is not
 the mic. Use `--source wav --wav <clip>` to replay a file instead.
+
+### Danger events (server + OLED)
+
+When the classifier raises the **safety** flag (scream/gunshot, `safety_prob ≥
+0.7`), the node does three things on the rising edge — in addition to turning the
+LED red:
+
+1. **POSTs the event** to the master server (`POST {EDGE_SERVER_URL}/api/alerts/safety`
+   with `x-api-key`), which forwards it to Telegram: subscribers whose venue is
+   within their alert radius, plus law enforcement (`AUTHORITY_TELEGRAM_CHAT_IDS`
+   on the server). The call is async (background thread, stdlib `urllib`), so the
+   1 s loop is never blocked; failures are logged and retried.
+2. **Pushes the string to the MCU** over the Bridge: `Bridge.call("show_event", "SCREAM 93%")`
+   → the sketch shows it on the SSD1306 OLED for 10 s, then returns to `MONITOR OK`.
+3. Emits `EdgeEvent.safety` on stdout as before.
+
+Set `EDGE_REPORT_SAFETY=0` to keep it local (LED + OLED only).
 
 ### Live monitor (real time)
 

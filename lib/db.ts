@@ -495,6 +495,31 @@ export function getStationById(stationId: string): Station | undefined {
   return db.prepare('SELECT * FROM stations WHERE id = ?').get(stationId) as Station | undefined;
 }
 
+// Assicura l'esistenza di una stazione: la registra se assente senza sovrascrivere
+// una stazione già nota. Usata dagli eventi di pericolo, che possono arrivare dal
+// device prima che sia stata inviata qualsiasi lettura dB.
+export function upsertStation(input: {
+  id: string;
+  name?: string;
+  latitude?: number;
+  longitude?: number;
+  is_dummy?: boolean;
+}): Station {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO stations (id, name, latitude, longitude, is_dummy)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO NOTHING
+  `).run(
+    input.id,
+    input.name || `Stazione Arduino (${input.id})`,
+    input.latitude ?? 45.0705,
+    input.longitude ?? 7.6868,
+    input.is_dummy ? 1 : 0
+  );
+  return getStationById(input.id)!;
+}
+
 // ==========================================
 // ANAGRAFICA AZIENDE (ESERCENTI) + TELEGRAM
 // ==========================================

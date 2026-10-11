@@ -1,4 +1,4 @@
-import { TELEGRAM_BOT_TOKEN, NOISE_ALERT_THRESHOLD_DB } from './constants';
+import { TELEGRAM_BOT_TOKEN, NOISE_ALERT_THRESHOLD_DB, SAFETY_ALERT_NOTIFY_COOLDOWN_MS } from './constants';
 import { calculateHaversineDistanceMeters, geocodeAddressTurin } from './geo';
 import { evaluateOpenStatus, getOpenStatusProvider } from './open-status';
 import {
@@ -302,6 +302,217 @@ export async function dispatchNoiseAlertToSubscribers(params: {
     notifiedCount,
     subscribersEvaluated: subscribers.length,
     skippedClosed,
+    results,
+  };
+}
+
+// ==========================================
+// ALLERTE DI PERICOLO (scream / gunshot)
+// ==========================================
+
+/**
+ * Chat id delle forze dell'ordine destinatarie delle allerte di pericolo.
+ * Da AUTHORITY_TELEGRAM_CHAT_IDS (lista separata da virgole). Vuoto = nessuna.
+ */
+export function getAuthorityChatIds(): string[] {
+  return (process.env.AUTHORITY_TELEGRAM_CHAT_IDS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Formatta il messaggio Telegram di un evento di PERICOLO (HTML sicuro).
+ * Variante per sottoscrittori (con distanza) e per le forze dell'ordine (con coordinate).
+ */
+export function formatSafetyAlertMessage(params: {
+  stationName: string;
+  stationId: string;
+  latitude: number;
+  longitude: number;
+  eventType: string;
+  confidence?: number;
+  audience: 'subscriber' | 'authority';
+  distanceMeters?: number;
+  userAddress?: string;
+  userRadiusMeters?: number;
+  timestamp?: number;
+  customMessage?: string;
+}): string {
+  const when = new Date(params.timestamp || Date.now());
+  const timeStr = when.toLocaleTimeString('it-IT');
+  const dateStr = when.toLocaleDateString('it-IT');
+
+  const label =
+    params.eventType === 'gunshot'
+      ? '🔫 <b>POSSIBILE SPARO</b>'
+      : params.eventType === 'scream'
+        ? '🆘 <b>POSSIBILI URLA / RICHIESTA DI AIUTO</b>'
+        : '⚠️ <b>EVENTO DI PERICOLO RILEVATO</b>';
+  const confidence =
+    params.confidence != null ? ` — confidenza <code>${Math.round(params.confidence * 100)}%</code>` : '';
+
+  const mapUrl = `https://www.openstreetmap.org/?mlat=${params.latitude}&mlon=${params.longitude}#map=19/${params.latitude}/${params.longitude}`;
+  const audienceBlock =
+    params.audience === 'authority'
+      ? `🌐 <b>Coordinate:</b> <a href="${mapUrl}">${params.latitude.toFixed(5)}, ${params.longitude.toFixed(5)}</a>\n` +
+        `🎯 <b>Richiesta di verifica/intervento delle forze dell'ordine.</b>`
+      : `📍 <b>Distanza dalla tua attività:</b> <b>${Math.round(params.distanceMeters || 0)} metri</b> (entro il tuo raggio di ${params.userRadiusMeters ?? 150}m)\n` +
+        `🏢 <b>Tua Sede:</b> ${params.userAddress || 'Indirizzo registrato'}`;
+
+  return `🚨 <b>ALLERTA SICUREZZA URBANA — TORINO</b> 🚨
+
+${label}${confidence}
+📡 <b>Cella acustica:</b> <b>${params.stationName}</b> [<code>${params.stationId}</code>]
+${audienceBlock}
+🕒 <b>Rilevamento:</b> ${dateStr} ore ${timeStr}
+
+${params.customMessage ? `📝 <i>Nota: ${params.customMessage}</i>\n` : ''}⚡ <i>Allerta generata automaticamente dal sistema di monitoraggio acustico urbano.</i>`;
+}
+
+/**
+ * Inoltra un evento di PERICOLO (scream/gunshot) ai sottoscrittori la cui sede
+ * rientra nel proprio raggio dalla stazione, PIÙ alle forze dell'ordine
+ * (AUTHORITY_TELEGRAM_CHAT_IDS, senza filtro di raggio). Anti-spam per
+ * destinatario. L'esito viene registrato in `noise_alerts` (channel: 'safety').
+ */
+export async function dispatchSafetyAlertToSubscribers(params: {
+  station: { id: string; name: string; latitude: number; longitude: number };
+  eventType: string;
+  confidence?: number;
+  timestamp?: number;
+  maxAgeMs?: number;
+  customMessage?: string;
+  cooldownMs?: number;
+}): Promise<{
+  notifiedCount: number;
+  subscribersEvaluated: number;
+  authoritiesNotified: number;
+  isStale?: boolean;
+  results: Array<{
+    chat_id: string;
+    audience: 'subscriber' | 'authority';
+    status: 'sent' | 'cooldown' | 'error';
+    distanceMeters?: number;
+    radiusMeters?: number;
+    error?: string;
+  }>;
+}> {
+  const now = Date.now();
+  const eventTime = params.timestamp || now;
+  const maxAge = params.maxAgeMs ?? 2 * 60 * 1000;
+  if (Math.abs(now - eventTime) > maxAge) {
+    console.warn(
+      `[Telegram Safety] Notifica annullata: evento avvenuto ${Math.round((now - eventTime) / 1000)}s fa (limite: ${maxAge / 1000}s).`
+    );
+    return { notifiedCount: 0, subscribersEvaluated: 0, authoritiesNotified: 0, isStale: true, results: [] };
+  }
+
+  const cooldown = params.cooldownMs ?? SAFETY_ALERT_NOTIFY_COOLDOWN_MS;
+  const subscribers = getActiveAuthenticatedSubscribers();
+  const authorities = getAuthorityChatIds();
+
+  const results: Array<any> = [];
+  let notifiedCount = 0;
+  let authoritiesNotified = 0;
+
+  // 1) Sottoscrittori entro il proprio raggio di allerta
+  for (const sub of subscribers) {
+    if (sub.latitude == null || sub.longitude == null) continue;
+
+    const distanceMeters = calculateHaversineDistanceMeters(
+      sub.latitude,
+      sub.longitude,
+      params.station.latitude,
+      params.station.longitude
+    );
+    const radius = sub.alert_radius_meters || 150;
+    if (distanceMeters > radius) continue;
+
+    if (sub.last_alert_at && now - sub.last_alert_at < cooldown) {
+      results.push({ chat_id: sub.chat_id, audience: 'subscriber', status: 'cooldown', distanceMeters, radiusMeters: radius });
+      continue;
+    }
+
+    const text = formatSafetyAlertMessage({
+      stationName: params.station.name,
+      stationId: params.station.id,
+      latitude: params.station.latitude,
+      longitude: params.station.longitude,
+      eventType: params.eventType,
+      confidence: params.confidence,
+      audience: 'subscriber',
+      distanceMeters,
+      userAddress: sub.address || undefined,
+      userRadiusMeters: radius,
+      timestamp: now,
+      customMessage: params.customMessage,
+    });
+
+    const sendRes = await sendTelegramMessage(sub.chat_id, text, 'HTML');
+    if (sendRes.ok || sendRes.success) {
+      updateSubscriberLastAlert(sub.chat_id, now);
+      notifiedCount++;
+      results.push({ chat_id: sub.chat_id, audience: 'subscriber', status: 'sent', distanceMeters, radiusMeters: radius });
+    } else {
+      results.push({ chat_id: sub.chat_id, audience: 'subscriber', status: 'error', distanceMeters, radiusMeters: radius, error: sendRes.error });
+    }
+  }
+
+  // 2) Forze dell'ordine: nessun filtro di raggio; si invia a ogni evento rilevato
+  for (const chatId of authorities) {
+    const text = formatSafetyAlertMessage({
+      stationName: params.station.name,
+      stationId: params.station.id,
+      latitude: params.station.latitude,
+      longitude: params.station.longitude,
+      eventType: params.eventType,
+      confidence: params.confidence,
+      audience: 'authority',
+      timestamp: now,
+      customMessage: params.customMessage,
+    });
+    const sendRes = await sendTelegramMessage(chatId, text, 'HTML');
+    if (sendRes.ok || sendRes.success) {
+      authoritiesNotified++;
+      results.push({ chat_id: chatId, audience: 'authority', status: 'sent' });
+    } else {
+      results.push({ chat_id: chatId, audience: 'authority', status: 'error', error: sendRes.error });
+    }
+  }
+
+  const total = notifiedCount + authoritiesNotified;
+  const status =
+    total > 0
+      ? 'sent'
+      : subscribers.length === 0 && authorities.length === 0
+        ? 'no_recipients'
+        : 'no_delivery';
+
+  insertNoiseAlert({
+    station_id: params.station.id,
+    threshold_db: 0,
+    started_at: eventTime,
+    triggered_at: eventTime,
+    duration_ms: 0,
+    recipients: total,
+    status,
+    details: JSON.stringify({
+      channel: 'safety',
+      kind: params.eventType,
+      confidence: params.confidence ?? null,
+      subscribersNotified: notifiedCount,
+      authoritiesNotified,
+      subscribersEvaluated: subscribers.length,
+      authoritiesEvaluated: authorities.length,
+      results,
+    }),
+  });
+
+  return {
+    notifiedCount,
+    subscribersEvaluated: subscribers.length,
+    authoritiesNotified,
     results,
   };
 }

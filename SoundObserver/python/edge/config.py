@@ -47,6 +47,15 @@ class RuntimeConfig:
     use_bridge: bool = True
     decision: DecisionConfig = field(default_factory=DecisionConfig)
 
+    # --- Master server reporting (danger events -> Telegram via the server) ---
+    server_url: str = "http://192.168.22.103:3000"  # base URL of the Next.js master
+    api_key: str = "arduino-torino-noise-secret-2026"  # SENSOR_API_KEY on the server
+    station_id: str = "ard-uno-q-real"
+    station_name: str = "Arduino Uno Q (Stazione Hardware)"
+    latitude: float = 45.0566
+    longitude: float = 7.6812
+    report_safety: bool = True  # POST danger events to the master server
+
     @property
     def win_samples(self) -> int:
         return int(round(self.win_seconds * self.sample_rate))
@@ -54,6 +63,10 @@ class RuntimeConfig:
     @property
     def hop_samples(self) -> int:
         return int(round(self.hop_seconds * self.sample_rate))
+
+    @property
+    def safety_alert_url(self) -> str:
+        return self.server_url.rstrip("/") + "/api/alerts/safety"
 
     def resolve_model(self) -> Path:
         """Return the model file to load, honouring the explicit override."""
@@ -95,6 +108,20 @@ def load_config(**overrides) -> RuntimeConfig:
         cfg.min_confidence = float(os.environ["EDGE_MIN_CONFIDENCE"])
     if os.environ.get("EDGE_BG_MARGIN"):
         cfg.background_margin_db = float(os.environ["EDGE_BG_MARGIN"])
+    if os.environ.get("EDGE_SERVER_URL"):
+        cfg.server_url = os.environ["EDGE_SERVER_URL"]
+    if os.environ.get("SENSOR_API_KEY"):
+        cfg.api_key = os.environ["SENSOR_API_KEY"]
+    if os.environ.get("STATION_ID"):
+        cfg.station_id = os.environ["STATION_ID"]
+    if os.environ.get("STATION_NAME"):
+        cfg.station_name = os.environ["STATION_NAME"]
+    if os.environ.get("LATITUDE"):
+        cfg.latitude = float(os.environ["LATITUDE"])
+    if os.environ.get("LONGITUDE"):
+        cfg.longitude = float(os.environ["LONGITUDE"])
+    if os.environ.get("EDGE_REPORT_SAFETY"):
+        cfg.report_safety = os.environ["EDGE_REPORT_SAFETY"].strip().lower() not in ("0", "false", "no")
     for key, value in overrides.items():
         if value is not None and hasattr(cfg, key):
             setattr(cfg, key, value)

@@ -24,13 +24,14 @@ import torch
 import torch.nn.functional as F
 import yaml
 
-from acoustic_models import esc50, urban_safety, urbansound8k
+from acoustic_models import esc50, freesound_dataset, urban_safety, urbansound8k
 from acoustic_models.ds_cnn import DSCNN
 from acoustic_models.export import export_classifier_onnx
 from acoustic_models.features import LogMel
 
 DATASETS = {
     "urban_safety": urban_safety,
+    "freesound_safety": freesound_dataset,
     "us8k": urbansound8k,
     "esc50": esc50,
 }
@@ -121,17 +122,23 @@ def train_real(
         gunshot_idx = class_names.index("gunshot") if "gunshot" in class_names else -1
         safety = np.array([1.0 if lab in (scream_idx, gunshot_idx) else 0.0 for lab in y], dtype=np.float32)
 
-    tr_all = np.where(fold != test_fold)[0]
-    te = np.where(fold == test_fold)[0]
+    if "split" in blob:
+        split = np.asarray(blob["split"])
+        tr = np.where(split == "train")[0]
+        val = np.where(split == "val")[0]
+        te = np.where(split == "test")[0]
+    else:
+        tr_all = np.where(fold != test_fold)[0]
+        te = np.where(fold == test_fold)[0]
 
-    # Hold out validation clips (not individual windows)
-    train_clips = np.unique(clip_id[tr_all])
-    perm = rng.permutation(len(train_clips))
-    n_val = max(1, int(len(train_clips) * val_frac))
-    val_clips = set(train_clips[perm[:n_val]].tolist())
-    is_val = np.array([c in val_clips for c in clip_id[tr_all]])
-    val = tr_all[is_val]
-    tr = tr_all[~is_val]
+        # Hold out validation clips (not individual windows)
+        train_clips = np.unique(clip_id[tr_all])
+        perm = rng.permutation(len(train_clips))
+        n_val = max(1, int(len(train_clips) * val_frac))
+        val_clips = set(train_clips[perm[:n_val]].tolist())
+        is_val = np.array([c in val_clips for c in clip_id[tr_all]])
+        val = tr_all[is_val]
+        tr = tr_all[~is_val]
 
     # Compute mean and standard deviation from training set
     mu, sd = float(X[tr].mean()), float(X[tr].std())
@@ -218,6 +225,8 @@ def train_real(
         "model_state_dict": model.state_dict(),
         "n_urban": n_classes,
         "class_names": class_names,
+        "frames": int(X.shape[-1]),
+        "win_seconds": float(blob.get("win_seconds", 5.0 if X.shape[-1] > 100 else 1.0)),
         "norm_mean": mu,
         "norm_std": sd,
         "best_epoch": best_epoch,
@@ -231,7 +240,7 @@ def train_real(
     # Export to ONNX if requested
     if export_onnx:
         os.makedirs(os.path.dirname(export_onnx), exist_ok=True)
-        export_classifier_onnx(export_onnx, n_urban=n_classes, weights_path=out_checkpoint)
+        export_classifier_onnx(export_onnx, n_urban=n_classes, frames=int(X.shape[-1]), weights_path=out_checkpoint)
         print(f"[OK] ONNX model exported -> {export_onnx}")
 
     return checkpoint

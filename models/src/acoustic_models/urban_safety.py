@@ -601,6 +601,9 @@ def main() -> None:
     parser.add_argument("--data-root", default="data", help="path to data root directory")
     parser.add_argument("--max-per-class", type=int, default=150, help="max clips per class")
     parser.add_argument("--out-cache", default="data/urban_safety_features.pt", help="cache path")
+    parser.add_argument("--win-seconds", type=float, default=1.0, help="window length in seconds (1.0 or 5.0)")
+    parser.add_argument("--hop-seconds", type=float, default=None, help="hop length in seconds")
+    parser.add_argument("--scream-hop-seconds", type=float, default=None, help="scream hop length in seconds")
     parser.add_argument("--verify-splits", action="store_true", help="verify disjointness of train/val/test splits")
     args = parser.parse_args()
 
@@ -617,17 +620,36 @@ def main() -> None:
             print(">>> WARNING: Data leakage detected!")
         return
 
-    print(f"=== Urban Safety Audio Dataset Pipeline ===")
+    print(f"=== Urban Safety Audio Dataset Pipeline ({args.win_seconds}s windows) ===")
     print(f"Classes ({len(CLASS_NAMES)}): {', '.join(CLASS_NAMES)}")
     clips = assemble_dataset(args.data_root, max_per_class=args.max_per_class)
-    print(f"Featurizing {len(clips)} clips...")
-    blob = build_features(clips)
+    print(f"Featurizing {len(clips)} clips with win_seconds={args.win_seconds}s ...")
+
+    target_frames = 49 if args.win_seconds <= 1.0 else 249
+    hop_sec = args.hop_seconds if args.hop_seconds is not None else (2.5 if args.win_seconds >= 5.0 else args.win_seconds)
+    scream_hop_sec = (
+        args.scream_hop_seconds
+        if args.scream_hop_seconds is not None
+        else (1.5 if args.win_seconds >= 5.0 else 0.5)
+    )
+
+    logmel = LogMel(sample_rate=16000, target_frames=target_frames)
+    blob = build_features(
+        clips,
+        win_seconds=args.win_seconds,
+        hop_seconds=hop_sec,
+        scream_hop_seconds=scream_hop_sec,
+        logmel=logmel,
+    )
     blob["class_names"] = CLASS_NAMES
     blob["normal_group"] = NORMAL_GROUP
     blob["anomalous_group"] = ANOMALOUS_GROUP
+    blob["win_seconds"] = args.win_seconds
+    blob["target_frames"] = target_frames
+
     os.makedirs(os.path.dirname(args.out_cache), exist_ok=True)
     torch.save(blob, args.out_cache)
-    print(f"Saved feature blob ({blob['X'].shape[0]} windows) -> {args.out_cache}")
+    print(f"Saved feature blob ({blob['X'].shape[0]} windows, shape {tuple(blob['X'].shape)}) -> {args.out_cache}")
 
 
 if __name__ == "__main__":

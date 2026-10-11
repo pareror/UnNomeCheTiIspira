@@ -28,11 +28,11 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, roc_auc_score
 from sklearn.neighbors import NearestNeighbors
 
-from acoustic_models import esc50, urban_safety, urbansound8k
+from acoustic_models import esc50, freesound_dataset, urban_safety, urbansound8k
 from acoustic_models.anomaly import TinyAutoencoder
 from acoustic_models.ds_cnn import DSCNN
 
-DATASETS = {"esc50": esc50, "us8k": urbansound8k, "urban_safety": urban_safety}
+DATASETS = {"esc50": esc50, "us8k": urbansound8k, "urban_safety": urban_safety, "freesound_safety": freesound_dataset}
 
 
 def get_features(dataset: str, data_root: str, cache_path: str) -> dict:
@@ -45,7 +45,7 @@ def get_features(dataset: str, data_root: str, cache_path: str) -> dict:
             module.download(data_root)
         elif dataset == "esc50" and not os.path.isdir(os.path.join(data_root, "ESC-50-master")):
             module.download(data_root)
-        elif dataset == "urban_safety":
+        elif dataset in ("urban_safety", "freesound_safety"):
             module.download(data_root)
         print(f"featurizing {dataset} ...")
         blob = module.build_blob(data_root)
@@ -96,18 +96,24 @@ def train_classifier(
     X, y, fold, clip_id = blob["X"], blob["y"], blob["fold"], blob["clip_id"]
     n_classes = len(blob["class_names"])
 
-    tr_all = np.where(fold != test_fold)[0]
-    te = np.where(fold == test_fold)[0]
+    if "split" in blob:
+        split = np.asarray(blob["split"])
+        tr = np.where(split == "train")[0]
+        val = np.where(split == "val")[0]
+        te = np.where(split == "test")[0]
+    else:
+        tr_all = np.where(fold != test_fold)[0]
+        te = np.where(fold == test_fold)[0]
 
-    # Hold out validation clips (not windows) so all windows of a clip stay on
-    # the same side of the split.
-    train_clips = np.unique(clip_id[tr_all])
-    perm = rng.permutation(len(train_clips))
-    n_val = max(1, int(len(train_clips) * val_frac))
-    val_clips = set(train_clips[perm[:n_val]].tolist())
-    is_val = np.array([c in val_clips for c in clip_id[tr_all]])
-    val = tr_all[is_val]
-    tr = tr_all[~is_val]
+        # Hold out validation clips (not windows) so all windows of a clip stay on
+        # the same side of the split.
+        train_clips = np.unique(clip_id[tr_all])
+        perm = rng.permutation(len(train_clips))
+        n_val = max(1, int(len(train_clips) * val_frac))
+        val_clips = set(train_clips[perm[:n_val]].tolist())
+        is_val = np.array([c in val_clips for c in clip_id[tr_all]])
+        val = tr_all[is_val]
+        tr = tr_all[~is_val]
 
     # Normalization stats from a subsample of the training windows, and per-batch
     # normalization, so we never materialize a full-size copy of X.
@@ -226,18 +232,26 @@ def run_anomaly(
 
     normal = group == blob["normal_group"]
     anomalous = group == blob["anomalous_group"]
-    tr_all = np.where(normal & (fold != test_fold))[0]
-    te_n = np.where(normal & (fold == test_fold))[0]
-    te_a = np.where(anomalous & (fold == test_fold))[0]
 
-    # Hold out validation clips (not windows) for early stopping.
-    train_clips = np.unique(clip_id[tr_all])
-    perm = rng.permutation(len(train_clips))
-    n_val = max(1, int(len(train_clips) * val_frac))
-    val_clips = set(train_clips[perm[:n_val]].tolist())
-    is_val = np.array([c in val_clips for c in clip_id[tr_all]])
-    val = tr_all[is_val]
-    tr = tr_all[~is_val]
+    if "split" in blob:
+        split = np.asarray(blob["split"])
+        tr = np.where(normal & (split == "train"))[0]
+        val = np.where(normal & (split == "val"))[0]
+        te_n = np.where(normal & (split == "test"))[0]
+        te_a = np.where(anomalous & (split == "test"))[0]
+    else:
+        tr_all = np.where(normal & (fold != test_fold))[0]
+        te_n = np.where(normal & (fold == test_fold))[0]
+        te_a = np.where(anomalous & (fold == test_fold))[0]
+
+        # Hold out validation clips (not windows) for early stopping.
+        train_clips = np.unique(clip_id[tr_all])
+        perm = rng.permutation(len(train_clips))
+        n_val = max(1, int(len(train_clips) * val_frac))
+        val_clips = set(train_clips[perm[:n_val]].tolist())
+        is_val = np.array([c in val_clips for c in clip_id[tr_all]])
+        val = tr_all[is_val]
+        tr = tr_all[~is_val]
 
     # Per-batch normalization + a bounded subsample for the density/kNN fits,
     # to keep memory and time in check on a large dataset.
@@ -427,6 +441,7 @@ def main() -> None:
             "esc50": "data/esc50",
             "us8k": "data/urbansound8k",
             "urban_safety": "data",
+            "freesound_safety": "data",
         }[args.dataset]
     if args.cache is None:
         args.cache = f"data/{args.dataset}_features.pt"

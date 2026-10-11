@@ -58,7 +58,9 @@ def _onnx_export(model, dummy, path: str, input_names: list[str], output_names: 
         )
 
 
-def export_classifier_onnx(path: str, n_urban: int = 8, weights_path: str | None = None) -> None:
+def export_classifier_onnx(
+    path: str, n_urban: int = 8, frames: int = 49, weights_path: str | None = None
+) -> None:
     model = DSCNN(n_mels=N_MELS, n_urban=n_urban)
     if weights_path is not None and os.path.exists(weights_path):
         ckpt = torch.load(weights_path, map_location="cpu", weights_only=False)
@@ -66,7 +68,7 @@ def export_classifier_onnx(path: str, n_urban: int = 8, weights_path: str | None
         model.load_state_dict(state_dict)
         print(f"loaded weights from {weights_path}")
     model.eval()
-    dummy = torch.randn(1, 1, N_MELS, FRAMES)
+    dummy = torch.randn(1, 1, N_MELS, frames)
     _onnx_export(
         model,
         dummy,

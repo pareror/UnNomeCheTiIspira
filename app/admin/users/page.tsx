@@ -167,8 +167,7 @@ export default function AdminUsersManagementPage() {
     <div
       style={{
         minHeight: '100vh',
-        width: '100vw',
-        overflowY: 'auto',
+        width: '100%',
         backgroundColor: '#0b1329',
         color: '#f8fafc',
         fontFamily: 'system-ui, -apple-system, sans-serif',
@@ -346,7 +345,7 @@ export default function AdminUsersManagementPage() {
       </header>
 
       {/* Main Content */}
-      <main style={{ maxWidth: '1280px', margin: '0 auto', padding: '28px 24px' }}>
+      <main style={{ maxWidth: '1280px', margin: '0 auto', padding: '28px 24px 80px 24px' }}>
         {/* Caso OPERATORE: Accesso Negato con spiegazione trasparente */}
         {currentUser?.role !== 'superadmin' ? (
           <div

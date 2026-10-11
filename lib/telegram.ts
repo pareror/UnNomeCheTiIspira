@@ -380,8 +380,10 @@ export async function handleSubscriberUpdate(update: any): Promise<void> {
       chatIdStr,
       `👋 <b>Benvenuto nel Sistema Allerte Acustiche Torino Noise!</b>\n\n` +
         `Questo bot monitora le emissioni sonore urbane attorno alla tua attività e ti invia avvisi istantanei se il rumore supera i livelli consentiti.\n\n` +
-        `🔐 <b>Autenticazione Richiesta:</b>\n` +
-        `Per procedere, invia la tua <b>chiave di accesso monouso</b> rilasciata dall'amministrazione per la tua attività (es: <code>/login TN-XXXX-XXXX</code> oppure digita direttamente il codice):`
+        `🔑 <b>Attivazione Profilo Esercente:</b>\n` +
+        `Scrivi <b>/start</b> o <b>/chiave</b> per attivare il profilo della tua attività:\n\n` +
+        `• Digita <code>/chiave &lt;CODICE&gt;</code> (es: <code>/chiave TN-XXXX-XXXX-XXXX</code>)\n` +
+        `• Oppure digita <code>/login &lt;CODICE&gt;</code> o invia direttamente la chiave monouso fornita dall'amministrazione.`
     );
     return;
   }
@@ -401,15 +403,22 @@ export async function handleSubscriberUpdate(update: any): Promise<void> {
     return;
   }
 
-  // 3. Comando /login <chiave> o tentativo di autenticazione tramite testo
-  if (rawText.startsWith('/login') || !isAuth) {
+  // 3. Comando /chiave o /login o tentativo di autenticazione tramite testo
+  if (rawText.startsWith('/login') || rawText.startsWith('/chiave') || !isAuth) {
     let keyToTest = rawText;
-    if (rawText.startsWith('/login')) {
+    if (rawText.startsWith('/login') || rawText.startsWith('/chiave')) {
       keyToTest = rawText.split(/\s+/).slice(1).join(' ').trim();
     }
 
     if (!keyToTest) {
-      await sendTelegramMessage(chatIdStr, `⚠️ Inserisci la chiave monouso fornita dall'amministratore. Esempio:\n<code>/login TN-XXXX-XXXX</code>`);
+      await sendTelegramMessage(
+        chatIdStr,
+        `⚠️ <b>Inserisci la tua chiave per attivare il profilo:</b>\n\n` +
+        `Digita il comando seguito dal codice rilasciato dall'amministratore, ad esempio:\n` +
+        `<code>/chiave TN-XXXX-XXXX-XXXX</code>\n` +
+        `oppure:\n` +
+        `<code>/login TN-XXXX-XXXX-XXXX</code>`
+      );
       return;
     }
 

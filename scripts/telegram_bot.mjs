@@ -348,23 +348,32 @@ async function handleIncomingMessage(msg) {
         chatId,
         `👋 <b>Benvenuto nel Sistema Allerte Acustiche Torino Noise!</b>\n\n` +
         `Questo bot monitora le emissioni sonore urbane attorno alla tua attività e ti invia avvisi istantanei se il rumore supera i livelli consentiti.\n\n` +
-        `🔐 <b>Autenticazione Richiesta:</b>\n` +
-        `Per procedere, invia la <b>chiave di accesso monouso</b> rilasciata dall'amministrazione per la tua attività (es: <code>/login CHIAVE</code> oppure invia direttamente il codice):`
+        `🔑 <b>Attivazione Profilo Esercente:</b>\n` +
+        `Scrivi <b>/start</b> o <b>/chiave</b> per attivare il profilo della tua attività:\n\n` +
+        `• Digita <code>/chiave &lt;CODICE&gt;</code> (es: <code>/chiave TN-XXXX-XXXX-XXXX</code>)\n` +
+        `• Oppure digita <code>/login &lt;CODICE&gt;</code> o invia direttamente la chiave monouso fornita dall'amministrazione.`
       );
     }
     return;
   }
 
-  // 2. Comando /login <chiave> o tentativo di autenticazione tramite testo
-  if (rawText.startsWith('/login') || !isAuth) {
+  // 2. Comando /chiave o /login o tentativo di autenticazione tramite testo
+  if (rawText.startsWith('/login') || rawText.startsWith('/chiave') || !isAuth) {
     let keyToTest = rawText;
-    if (rawText.startsWith('/login')) {
+    if (rawText.startsWith('/login') || rawText.startsWith('/chiave')) {
       const parts = rawText.split(/\s+/);
       keyToTest = parts.slice(1).join(' ').trim();
     }
 
     if (!keyToTest) {
-      await sendMessage(chatId, `⚠️ Inserisci la chiave univoca rilasciata dall'amministratore. Esempio:\n<code>/login TN-XXXX-XXXX</code>`);
+      await sendMessage(
+        chatId,
+        `⚠️ <b>Inserisci la tua chiave per attivare il profilo:</b>\n\n` +
+        `Digita il comando seguito dal codice rilasciato dall'amministratore, ad esempio:\n` +
+        `<code>/chiave TN-XXXX-XXXX-XXXX</code>\n` +
+        `oppure:\n` +
+        `<code>/login TN-XXXX-XXXX-XXXX</code>`
+      );
       return;
     }
 
@@ -570,18 +579,21 @@ async function handleIncomingMessage(msg) {
   );
 }
 
-// Registra i comandi ufficiali con la Bot API per abilitare il menu popup di autocompletamento quando l'utente digita "/"
+// Registra comandi e descrizioni ufficiali (mostrate nell'anteprima di una nuova chat e nel menu)
 async function registerBotCommands() {
   const commands = [
-    { command: 'start', description: 'Avvia il bot e inserisci la chiave univoca' },
-    { command: 'raggio', description: 'Imposta il raggio di allerta in metri (es: /raggio 150)' },
+    { command: 'start', description: 'Avvia il bot o attiva il profilo esercente' },
+    { command: 'chiave', description: 'Attiva il profilo con la chiave monouso (es: /chiave TN-XXXX)' },
+    { command: 'login', description: 'Accedi inserendo la tua chiave di attivazione' },
     { command: 'stazioni', description: 'Elenco celle acustiche monitorate nel tuo raggio' },
+    { command: 'raggio', description: 'Imposta il raggio di allerta in metri (es: /raggio 150)' },
     { command: 'stato', description: 'Riepilogo sede, coordinate, raggio e timer anti-spam' },
     { command: 'test_allerta', description: 'Invia una notifica di prova simulata' },
     { command: 'aiuto', description: 'Guida e istruzioni per configurare la tua attività' },
   ];
 
   try {
+    // 1. Menu dei comandi popup quando si digita "/"
     const res = await fetch(`${TELEGRAM_API}/setMyCommands`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -590,11 +602,30 @@ async function registerBotCommands() {
     const data = await res.json();
     if (data.ok) {
       console.log('✅ Menu popup dei comandi Telegram registrato con successo (setMyCommands OK)');
-    } else {
-      console.warn('⚠️ Registrazione comandi Telegram:', data.description);
     }
+
+    // 2. Descrizione anteprima della chat (mostrata all\'apertura di una nuova chat prima di premere Avvia)
+    const previewDescription =
+      "Benvenuto nel Torino Noise Monitor!\n\n" +
+      "Sistema di monitoraggio acustico urbano per esercenti commerciali.\n" +
+      "Scrivi /start o /chiave per attivare il profilo della tua attività e iniziare a ricevere le allerte sonore in tempo reale.";
+    await fetch(`${TELEGRAM_API}/setMyDescription`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: previewDescription }),
+    });
+    console.log('✅ Descrizione anteprima nuova chat impostata (setMyDescription OK)');
+
+    // 3. Descrizione breve del profilo
+    const shortDescription = "Scrivi /start o /chiave per attivare il profilo e monitorare l'inquinamento acustico.";
+    await fetch(`${TELEGRAM_API}/setMyShortDescription`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ short_description: shortDescription }),
+    });
+    console.log('✅ Descrizione breve profilo impostata (setMyShortDescription OK)');
   } catch (err) {
-    console.error('❌ Errore chiamata setMyCommands:', err.message);
+    console.error('❌ Errore registrazione metadati bot Telegram:', err.message);
   }
 }
 

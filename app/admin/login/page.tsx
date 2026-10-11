@@ -49,8 +49,7 @@ export default function AdminLoginPage() {
     <div
       style={{
         minHeight: '100vh',
-        width: '100vw',
-        overflowY: 'auto',
+        width: '100%',
         background: 'radial-gradient(circle at 50% 20%, #1e293b 0%, #0f172a 60%, #020617 100%)',
         display: 'flex',
         alignItems: 'center',

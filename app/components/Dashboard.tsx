@@ -118,6 +118,10 @@ export default function Dashboard() {
   useEffect(() => {
     if (!isSimulatingContinuous) return;
 
+    if (!showDummyStations) {
+      setShowDummyStations(true);
+    }
+
     const simInterval = setInterval(async () => {
       try {
         await fetch('/api/simulator', { method: 'POST' });
@@ -127,15 +131,19 @@ export default function Dashboard() {
     }, 1000);
 
     return () => clearInterval(simInterval);
-  }, [isSimulatingContinuous]);
+  }, [isSimulatingContinuous, showDummyStations]);
 
   // Trigger manuale di un singolo impulso dummy
   const triggerSingleSimulation = async () => {
+    if (!showDummyStations) {
+      setShowDummyStations(true);
+    }
     setSimMessage('Invio dati campionari Arduino in corso...');
     try {
       const res = await fetch('/api/simulator', { method: 'POST' });
       if (res.ok) {
         setSimMessage('Dati campionari acquisiti e memorizzati!');
+        await fetchStationsSnapshot();
       }
     } catch {
       setSimMessage('Errore durante la simulazione.');

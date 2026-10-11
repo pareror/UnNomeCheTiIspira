@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllStations, insertNoiseReading } from '@/lib/db';
+import { getAllStations, insertNoiseReading, seedInitialStations, getDb } from '@/lib/db';
 import { processReadingForAlerts } from '@/lib/alerts';
 import { applySecurityHeaders } from '@/lib/security';
 
@@ -30,7 +30,13 @@ function generateSimulatedIntensity(stationId: string): number {
 // POST: simula un ciclo di acquisizione da parte di tutti i sensori Arduino slave
 export async function POST() {
   try {
-    const stations = getAllStations();
+    // Assicurati che le stazioni dummy/fittizie siano registrate
+    const dummyCheck = getDb().prepare("SELECT count(*) as count FROM stations WHERE is_dummy = 1 OR id LIKE 'ard-to-%'").get() as { count: number };
+    if (dummyCheck.count === 0) {
+      seedInitialStations();
+    }
+
+    const stations = getAllStations('all');
     const now = Date.now();
     const newReadings = [];
 

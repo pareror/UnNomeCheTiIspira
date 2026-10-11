@@ -393,6 +393,7 @@ def loop():
             #state = not state
             bridge.notify("get_label", label)
             bridge.notify("set_led_level", db_int)
+            bridge.notify("get_confidence", float(confidence))
             bridge.disconnect()
             print(f"State {livello} has been sent to mcu")
 

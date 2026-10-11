@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { 
@@ -10,7 +10,8 @@ import {
   NOISE_RADIUS_METERS, 
   OPENFREEMAP_STYLES,
   OpenFreeMapStyleKey,
-  getNoiseLevel 
+  getNoiseLevel,
+  getSmoothNoiseColor 
 } from '@/lib/constants';
 
 export interface StationMapItem {
@@ -55,10 +56,103 @@ function createGeoJSONCircle(
   return coords;
 }
 
+// Costruttore HTML per il popup informativo con supporto JIT live
+function buildStationPopupHTML(
+  station: { id?: string; name?: string } | Record<string, any>,
+  intensity: number,
+  lastReadingTime: number | null
+): string {
+  const rounded = Math.round(intensity);
+  const smoothColor = getSmoothNoiseColor(intensity);
+  const noise = getNoiseLevel(rounded);
+  const dateStr = lastReadingTime
+    ? new Date(Number(lastReadingTime)).toLocaleTimeString('it-IT')
+    : 'In attesa di dati';
+  const intensityPercent = Math.min(100, Math.max(5, ((intensity - 30) / (105 - 30)) * 100));
+
+  return `
+    <div style="font-family: system-ui, -apple-system, sans-serif; min-width: 220px; padding: 4px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; gap: 8px;">
+        <h4 style="margin: 0; font-size: 14px; font-weight: 700; color: #0f172a; max-width: 155px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+          ${station.name}
+        </h4>
+        <span style="display: flex; align-items: center; gap: 4px; font-size: 10px; color: #16a34a; font-weight: 600; background: #dcfce7; padding: 2px 7px; border-radius: 10px; white-space: nowrap;">
+          <span style="width: 5px; height: 5px; border-radius: 50%; background-color: #22c55e; display: inline-block;"></span>
+          JIT Live
+        </span>
+      </div>
+      <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">
+        ID Sensore: <code>${station.id}</code>
+      </div>
+
+      <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px;">
+        <span style="font-size: 12px; color: #475569;">Intensità sonora:</span>
+        <span id="jit-popup-db-${station.id}" style="font-size: 20px; font-weight: 800; color: ${smoothColor}; transition: color 0.3s ease;">
+          ${rounded} dB
+        </span>
+      </div>
+
+      <!-- Barra di intensità live dinamica -->
+      <div style="width: 100%; height: 5px; background-color: #e2e8f0; border-radius: 3px; overflow: hidden; margin-bottom: 8px;">
+        <div id="jit-popup-bar-${station.id}" style="height: 100%; width: ${intensityPercent}%; background-color: ${smoothColor}; transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease;"></div>
+      </div>
+
+      <div style="font-size: 12px; margin-bottom: 6px; display: flex; justify-content: space-between;">
+        <span style="color: #64748b;">Stato acustico:</span>
+        <b id="jit-popup-label-${station.id}" style="color: ${smoothColor}; transition: color 0.3s ease;">${noise.label}</b>
+      </div>
+      <div style="font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 6px; line-height: 1.4;">
+        Raggio copertura: <b>${NOISE_RADIUS_METERS} m</b><br/>
+        Ultimo pacchetto: <b id="jit-popup-time-${station.id}">${dateStr}</b>
+      </div>
+    </div>
+  `;
+}
+
+// Aggiorna all'istante il DOM del popup aperto senza doverlo ricreare (zero sfarfallio)
+function updatePopupDOMIfOpen(stationId: string, intensity: number, lastReadingTime: number | null) {
+  const dbEl = document.getElementById(`jit-popup-db-${stationId}`);
+  const labelEl = document.getElementById(`jit-popup-label-${stationId}`);
+  const barEl = document.getElementById(`jit-popup-bar-${stationId}`);
+  const timeEl = document.getElementById(`jit-popup-time-${stationId}`);
+
+  if (dbEl && labelEl && barEl) {
+    const rounded = Math.round(intensity);
+    const smoothColor = getSmoothNoiseColor(intensity);
+    const noise = getNoiseLevel(rounded);
+    const intensityPercent = Math.min(100, Math.max(5, ((intensity - 30) / (105 - 30)) * 100));
+
+    dbEl.textContent = `${rounded} dB`;
+    dbEl.style.color = smoothColor;
+
+    labelEl.textContent = noise.label;
+    labelEl.style.color = smoothColor;
+
+    barEl.style.width = `${intensityPercent}%`;
+    barEl.style.backgroundColor = smoothColor;
+
+    if (timeEl && lastReadingTime) {
+      timeEl.textContent = new Date(Number(lastReadingTime)).toLocaleTimeString('it-IT');
+    }
+  }
+}
+
 export default function NoiseMap({ stations, selectedStationId }: NoiseMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const activePopupRef = useRef<maplibregl.Popup | null>(null);
+  const activePopupStationIdRef = useRef<string | null>(null);
+  const stationStatesRef = useRef<Map<string, {
+    id: string;
+    name: string;
+    latitude: number;
+    longitude: number;
+    currentIntensity: number;
+    targetIntensity: number;
+    last_reading_time: number | null;
+    radius_meters: number;
+  }>>(new Map());
+  const animFrameIdRef = useRef<number | null>(null);
   const [currentStyle, setCurrentStyle] = useState<OpenFreeMapStyleKey>('positron');
   const [visualMode, setVisualMode] = useState<HeatmapMode>('combined');
   const [glowSize, setGlowSize] = useState<number>(45); // Raggio visivo dell'aura sfumata in pixel
@@ -293,7 +387,7 @@ export default function NoiseMap({ stations, selectedStationId }: NoiseMapProps)
         },
       });
 
-      // Click sui pin o cerchi per visualizzare il popup dettagliato
+      // Click sui pin o cerchi per visualizzare il popup dettagliato con supporto JIT live
       const handleStationClick = (e: maplibregl.MapMouseEvent & { features?: maplibregl.MapGeoJSONFeature[] }) => {
         if (!e.features || e.features.length === 0) return;
         const props = e.features[0].properties;
@@ -305,40 +399,24 @@ export default function NoiseMap({ stations, selectedStationId }: NoiseMapProps)
           coords = geom.coordinates as [number, number];
         }
 
-        const dateStr = props.last_reading_time 
-          ? new Date(Number(props.last_reading_time)).toLocaleTimeString('it-IT')
-          : 'In attesa di dati';
-
         if (activePopupRef.current) {
           activePopupRef.current.remove();
         }
 
+        activePopupStationIdRef.current = props.id;
+
+        const currentIntensity = Number(props.current_intensity);
         const popup = new maplibregl.Popup({ offset: 14, closeButton: true })
           .setLngLat(coords)
-          .setHTML(`
-            <div style="font-family: system-ui, sans-serif; min-width: 200px; padding: 2px;">
-              <h4 style="margin: 0 0 4px 0; font-size: 14px; font-weight: bold; color: #0f172a;">
-                ${props.name}
-              </h4>
-              <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">
-                ID Slave: <code>${props.id}</code>
-              </div>
-              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-                <span style="font-size: 12px; color: #475569;">Intensità attuale:</span>
-                <span style="font-size: 17px; font-weight: bold; color: ${props.color};">
-                  ${props.current_intensity} dB
-                </span>
-              </div>
-              <div style="font-size: 12px; margin-bottom: 6px;">
-                Stato acustico: <b style="color: ${props.color};">${props.label}</b>
-              </div>
-              <div style="font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 6px;">
-                Raggio sensore: <b>${NOISE_RADIUS_METERS} m</b><br/>
-                Ultimo campionamento: <b>${dateStr}</b>
-              </div>
-            </div>
-          `)
+          .setHTML(buildStationPopupHTML(props, currentIntensity, props.last_reading_time))
           .addTo(map);
+
+        popup.on('close', () => {
+          if (activePopupStationIdRef.current === props.id) {
+            activePopupStationIdRef.current = null;
+          }
+          activePopupRef.current = null;
+        });
 
         activePopupRef.current = popup;
       };
@@ -362,49 +440,55 @@ export default function NoiseMap({ stations, selectedStationId }: NoiseMapProps)
     };
   }, [currentStyle]);
 
-  // 2. Aggiornamento GeoJSON con i dati correnti di telemetria
-  useEffect(() => {
+  // 2. Loop di interpolazione continua e graduale (Damped LERP)
+  // Elimina qualsiasi scatto brusco o lampeggio: i decibel, le aureole e i colori
+  // transitano in modo progressivo e naturale
+  const renderSmoothedGeoJSON = useCallback(() => {
     const map = mapRef.current;
-    if (!map || !isMapLoaded) return;
+    if (!map) return;
 
     const pointsSource = map.getSource('noise-stations-points') as maplibregl.GeoJSONSource | undefined;
     const circlesSource = map.getSource('noise-stations-circles-15m') as maplibregl.GeoJSONSource | undefined;
-
     if (!pointsSource || !circlesSource) return;
 
-    const pointFeatures = stations.map((station) => {
-      const noise = getNoiseLevel(station.current_intensity);
+    const pointFeatures = Array.from(stationStatesRef.current.values()).map((st) => {
+      const rounded = Math.round(st.currentIntensity);
+      const smoothColor = getSmoothNoiseColor(st.currentIntensity);
+      const noise = getNoiseLevel(rounded);
+
       return {
         type: 'Feature' as const,
         properties: {
-          id: station.id,
-          name: station.name,
-          current_intensity: station.current_intensity,
-          last_reading_time: station.last_reading_time,
-          color: noise.color,
-          fillColor: noise.fillColor,
+          id: st.id,
+          name: st.name,
+          current_intensity: Number(st.currentIntensity.toFixed(1)),
+          last_reading_time: st.last_reading_time,
+          color: smoothColor,
+          fillColor: smoothColor,
           label: noise.label,
         },
         geometry: {
           type: 'Point' as const,
-          coordinates: [station.longitude, station.latitude],
+          coordinates: [st.longitude, st.latitude],
         },
       };
     });
 
-    const circleFeatures = stations.map((station) => {
-      const noise = getNoiseLevel(station.current_intensity);
-      const ring = createGeoJSONCircle(station.longitude, station.latitude, NOISE_RADIUS_METERS, 36);
+    const circleFeatures = Array.from(stationStatesRef.current.values()).map((st) => {
+      const rounded = Math.round(st.currentIntensity);
+      const smoothColor = getSmoothNoiseColor(st.currentIntensity);
+      const noise = getNoiseLevel(rounded);
+      const ring = createGeoJSONCircle(st.longitude, st.latitude, st.radius_meters || NOISE_RADIUS_METERS, 36);
 
       return {
         type: 'Feature' as const,
         properties: {
-          id: station.id,
-          name: station.name,
-          current_intensity: station.current_intensity,
-          last_reading_time: station.last_reading_time,
-          color: noise.color,
-          fillColor: noise.fillColor,
+          id: st.id,
+          name: st.name,
+          current_intensity: Number(st.currentIntensity.toFixed(1)),
+          last_reading_time: st.last_reading_time,
+          color: smoothColor,
+          fillColor: smoothColor,
           label: noise.label,
         },
         geometry: {
@@ -423,7 +507,93 @@ export default function NoiseMap({ stations, selectedStationId }: NoiseMapProps)
       type: 'FeatureCollection',
       features: circleFeatures,
     });
-  }, [stations, isMapLoaded]);
+  }, []);
+
+  const tickAnimation = useCallback(() => {
+    let hasMotion = false;
+
+    stationStatesRef.current.forEach((st) => {
+      const delta = st.targetIntensity - st.currentIntensity;
+      if (Math.abs(delta) > 0.08) {
+        // Passo LERP del 8%: transizione progressiva ed elegante nell'arco di ~350ms
+        st.currentIntensity += delta * 0.08;
+        hasMotion = true;
+      } else {
+        st.currentIntensity = st.targetIntensity;
+      }
+    });
+
+    renderSmoothedGeoJSON();
+
+    // Aggiornamento Just-in-Time live del popup aperto
+    if (activePopupStationIdRef.current) {
+      const activeSt = stationStatesRef.current.get(activePopupStationIdRef.current);
+      if (activeSt) {
+        updatePopupDOMIfOpen(activeSt.id, activeSt.currentIntensity, activeSt.last_reading_time);
+      }
+    }
+
+    if (hasMotion) {
+      animFrameIdRef.current = requestAnimationFrame(tickAnimation);
+    } else {
+      animFrameIdRef.current = null;
+    }
+  }, [renderSmoothedGeoJSON]);
+
+  useEffect(() => {
+    if (!isMapLoaded) return;
+
+    // Sincronizza i target con le nuove letture ricevute dallo stream Just-in-Time
+    const activeIds = new Set(stations.map((s) => s.id));
+    for (const id of stationStatesRef.current.keys()) {
+      if (!activeIds.has(id)) {
+        stationStatesRef.current.delete(id);
+      }
+    }
+
+    stations.forEach((st) => {
+      const existing = stationStatesRef.current.get(st.id);
+      if (!existing) {
+        stationStatesRef.current.set(st.id, {
+          id: st.id,
+          name: st.name,
+          latitude: st.latitude,
+          longitude: st.longitude,
+          currentIntensity: st.current_intensity,
+          targetIntensity: st.current_intensity,
+          last_reading_time: st.last_reading_time,
+          radius_meters: st.radius_meters || NOISE_RADIUS_METERS,
+        });
+      } else {
+        existing.targetIntensity = st.current_intensity;
+        existing.name = st.name;
+        existing.latitude = st.latitude;
+        existing.longitude = st.longitude;
+        existing.last_reading_time = st.last_reading_time;
+        existing.radius_meters = st.radius_meters || NOISE_RADIUS_METERS;
+      }
+    });
+
+    if (!animFrameIdRef.current) {
+      animFrameIdRef.current = requestAnimationFrame(tickAnimation);
+    }
+
+    // Assicura l'aggiornamento JIT del popup se aperto
+    if (activePopupStationIdRef.current) {
+      const activeSt = stationStatesRef.current.get(activePopupStationIdRef.current);
+      if (activeSt) {
+        updatePopupDOMIfOpen(activeSt.id, activeSt.currentIntensity, activeSt.last_reading_time);
+      }
+    }
+  }, [stations, isMapLoaded, tickAnimation]);
+
+  useEffect(() => {
+    return () => {
+      if (animFrameIdRef.current) {
+        cancelAnimationFrame(animFrameIdRef.current);
+      }
+    };
+  }, []);
 
   // 3. Gestione della modalità visiva (Sfumature Heatmap / Aureole / Mista)
   useEffect(() => {
@@ -477,32 +647,19 @@ export default function NoiseMap({ stations, selectedStationId }: NoiseMapProps)
       activePopupRef.current.remove();
     }
 
+    activePopupStationIdRef.current = station.id;
+
     const popup = new maplibregl.Popup({ offset: 14, closeButton: true })
       .setLngLat([station.longitude, station.latitude])
-      .setHTML(`
-        <div style="font-family: system-ui, sans-serif; min-width: 200px; padding: 2px;">
-          <h4 style="margin: 0 0 4px 0; font-size: 14px; font-weight: bold; color: #0f172a;">
-            ${station.name}
-          </h4>
-          <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">
-            ID Slave: <code>${station.id}</code>
-          </div>
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
-            <span style="font-size: 12px; color: #475569;">Intensità attuale:</span>
-            <span style="font-size: 17px; font-weight: bold; color: ${noise.color};">
-              ${station.current_intensity} dB
-            </span>
-          </div>
-          <div style="font-size: 12px; margin-bottom: 6px;">
-            Stato acustico: <b style="color: ${noise.color};">${noise.label}</b>
-          </div>
-          <div style="font-size: 11px; color: #64748b; border-top: 1px solid #e2e8f0; padding-top: 6px;">
-            Raggio sensore: <b>${NOISE_RADIUS_METERS} m</b><br/>
-            Ultimo campionamento: <b>${dateStr}</b>
-          </div>
-        </div>
-      `)
+      .setHTML(buildStationPopupHTML(station, station.current_intensity, station.last_reading_time))
       .addTo(map);
+
+    popup.on('close', () => {
+      if (activePopupStationIdRef.current === station.id) {
+        activePopupStationIdRef.current = null;
+      }
+      activePopupRef.current = null;
+    });
 
     activePopupRef.current = popup;
   }, [selectedStationId, stations, isMapLoaded]);

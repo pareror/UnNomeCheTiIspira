@@ -1,178 +1,294 @@
 #!/usr/bin/env python3
 """
 =============================================================================
- ARDUINO UNO Q (4GB RAM) - HIGH PERFORMANCE NOISE TELEMETRY CLIENT
+ ARDUINO UNO Q (4GB RAM) - TELEMETRIA ACUSTICA REALE VERSO TORINO NOISE MONITOR
 =============================================================================
-Ottimizzato specificamente per la piattaforma Arduino UNO Q con 4GB di RAM:
-- Sfrutta la memoria RAM per buffering acustico ad alta frequenza (1000 Hz)
-- Calcolo in-memory di RMS e Leq (Livello Continuo Equivalente dB)
-- Connessione HTTP Keep-Alive persistente (evita handshake TCP/TLS ogni secondo)
-- Coda circolare in RAM (Zero-Data-Loss): se il Wi-Fi cade temporaneamente,
-  i campionamenti vengono conservati in RAM e re-inviati alla riconnessione.
-- Multithreading: acquisizione audio su thread dedicato e trasmissione asincrona.
+Script unificato per Arduino Uno Q:
+1. Acquisisce l'audio hardware dal microfono (arecord su hw:0,2).
+2. Calcola l'energia RMS in dBFS e la converte in scala decibel (dB SPL).
+3. Trasmette i decibel in tempo reale tramite HTTP POST al Server Master Next.js.
+4. Supporta buffer circolare in RAM (Zero-Data-Loss in caso di calo Wi-Fi).
+5. Invia i dati al coprocessore STM32 su /dev/ttyS0.
+6. Compatibile sia con l'Arduino App Framework (App.run) sia con esecuzione standalone.
 =============================================================================
 """
 
+# Import sicuro dell'Arduino App Framework
+try:
+    from arduino.app_utils import App
+except ImportError:
+    App = None
+
+import os
+import sys
 import time
 import math
-import random
-import threading
+import array
+import wave
+import subprocess
+import traceback
 import collections
+import threading
 from typing import Optional
 
+# Modulo seriale per STM32 (se installato)
+try:
+    import serial
+except ImportError:
+    serial = None
+
+# Dipendenza HTTP requests
 try:
     import requests
     from requests.adapters import HTTPAdapter
     from urllib3.util.retry import Retry
 except ImportError:
-    import sys
-    print("Installare la libreria requests: pip install requests")
+    print("[ERRORE] Libreria 'requests' mancante. Installa con: pip3 install requests")
     sys.exit(1)
 
-# CONFIGURAZIONE ARDUINO UNO Q SLAVE
-SERVER_URL = "http://192.168.1.100:3000/api/telemetry/reading"  # Sostituire con l'IP del server Next.js
-API_KEY = "arduino-torino-noise-secret-2026"
-STATION_ID = "ard-uno-q-baretti"
-STATION_NAME = "Arduino Uno Q (San Salvario - Baretti)"
+# =============================================================================
+# 1. CONFIGURAZIONE MASTER SERVER NEXT.JS & PARAMETRI STAZIONE
+# =============================================================================
+# IP del PC sulla rete Wi-Fi locale
+SERVER_URL = os.getenv("SERVER_URL", "http://192.168.22.103:3000/api/telemetry/reading")
+API_KEY = os.getenv("SENSOR_API_KEY", "arduino-torino-noise-secret-2026")
+STATION_ID = "ard-uno-q-real"
+STATION_NAME = "Arduino Uno Q (Stazione Hardware)"
 LATITUDE = 45.0566
 LONGITUDE = 7.6812
 
-# PARAMETRI BUFFER RAM (4GB RAM consentono code estese a impatto zero)
-MAX_RAM_BUFFER_SIZE = 3600  # Fino a 1 ora di backup in RAM in caso di assenza Wi-Fi
-SAMPLING_INTERVAL_SEC = 1.0  # Frequenza di trasmissione verso il Master (~1 Hz)
+# =============================================================================
+# 2. CONFIGURAZIONE AUDIO HARDWARE (ARECORD)
+# =============================================================================
+AUDIONAME = "test_audio.wav"
+ARECORD_DEVICE = "hw:0,2"
+RECORD_DURATION_SEC = "3"  # Durata campionamento in secondi per ogni misurazione
 
-# Coda in memoria (Thread-Safe)
+ARECORD_CMD = [
+    "arecord", "-D", ARECORD_DEVICE,
+    "-f", "S16_LE", "-c", "1", "-r", "16000",
+    "-d", RECORD_DURATION_SEC, AUDIONAME,
+]
+
+CHUNK_FRAMES = 4096
+
+# Calibrazione: dB_scala = dBFS + OFFSET.
+# Con 100: -60 dBFS -> 40 dB, -20 dBFS -> 80 dB, -5 dBFS -> 95 dB.
+CALIBRATION_OFFSET_DB = 100.0
+
+# Seriale per comunicazione con STM32
+SERIAL_PORT = "/dev/ttyS0"
+SERIAL_BAUD = 115200
+
+# Parametri buffer RAM per resilienza di rete
+MAX_RAM_BUFFER_SIZE = 3600
 ram_telemetry_queue = collections.deque(maxlen=MAX_RAM_BUFFER_SIZE)
 queue_lock = threading.Lock()
 running = True
 
+# Sessione HTTP Keep-Alive
+http_session: Optional[requests.Session] = None
+
+
+# =============================================================================
+# 3. FUNZIONI DI CALCOLO E ANALISI ACUSTICA
+# =============================================================================
+def dbfs_to_scala(dbfs: float) -> float:
+    """Converte dBFS nella scala decibel calibrata (mai sotto 0, -inf diventa 0)."""
+    if math.isinf(dbfs):
+        return 0.0
+    return max(0.0, dbfs + CALIBRATION_OFFSET_DB)
+
+
+def classifica(db: float) -> str:
+    """Ritorna l'etichetta del livello di rumore per terminale."""
+    if db < 40:
+        return "SILENZIO"
+    if db < 60:
+        return "AMBIENTE"
+    if db < 66:
+        return "RUMORE LIEVE (verde)"
+    if db < 81:
+        return "RUMORE MEDIO (giallo)"
+    if db <= 95:
+        return "RUMORE FORTE (rosso)"
+    return "RUMORE INTENSO (viola)"
+
+
+def get_wav_db(path: str):
+    """Analizza il file WAV a 16 bit e calcola (rms_dbfs, peak_dbfs)."""
+    with wave.open(path, "rb") as w:
+        if w.getsampwidth() != 2:
+            raise ValueError("Supportato solo PCM a 16 bit (S16_LE)")
+
+        somma_quadrati = 0.0
+        picco = 0
+        totale = 0
+
+        while True:
+            raw = w.readframes(CHUNK_FRAMES)
+            if not raw:
+                break
+            campioni = array.array("h")
+            campioni.frombytes(raw)
+            if sys.byteorder == "big":
+                campioni.byteswap()
+            for s in campioni:
+                somma_quadrati += s * s
+                a = -s if s < 0 else s
+                if a > picco:
+                    picco = a
+            totale += len(campioni)
+
+    if totale == 0:
+        raise ValueError("Nessun campione nel file audio registrato")
+
+    full_scale = 32768.0
+    rms = math.sqrt(somma_quadrati / totale)
+
+    def to_db(x):
+        return 20.0 * math.log10(x / full_scale) if x > 0 else float("-inf")
+
+    return to_db(rms), to_db(picco)
+
+
+# =============================================================================
+# 4. GESTIONE TRASMISSIONE WI-FI HTTP VERSO IL SERVER MASTER
+# =============================================================================
 def init_optimized_http_session() -> requests.Session:
-    """
-    Inizializza una sessione HTTP ottimizzata con connection pooling,
-    Keep-Alive e policy di retry automatico per l'hardware Arduino Uno Q.
-    """
+    """Inizializza una sessione HTTP Keep-Alive con retry automatici."""
     session = requests.Session()
-    retries = Retry(
-        total=3,
-        backoff_factor=0.3,
-        status_forcelist=[500, 502, 503, 504]
-    )
-    adapter = HTTPAdapter(
-        pool_connections=10,
-        pool_maxsize=20,
-        max_retries=retries,
-        pool_block=False
-    )
+    retries = Retry(total=2, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
+    adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=retries, pool_block=False)
     session.mount('http://', adapter)
     session.mount('https://', adapter)
     session.headers.update({
         'Content-Type': 'application/json',
         'x-api-key': API_KEY,
         'Connection': 'keep-alive',
-        'User-Agent': 'Arduino-Uno-Q-4GB/1.0',
+        'User-Agent': 'Arduino-Uno-Q-Hardware/1.0',
     })
     return session
 
-def simulate_high_precision_audio_adc() -> int:
-    """
-    Simula il campionamento microfonico analogico/I2S dell'Arduino Uno Q:
-    calcola l'energia acustica RMS su una finestra di 1 secondo.
-    """
-    base_db = 68.0
-    hour = time.localtime().tm_hour
-    # Movida più animata tra le 19:00 e le 02:00
-    if 19 <= hour or hour <= 2:
-        base_db += 14.0
 
-    # Rumore casuale e picchi
-    noise = random.gauss(0, 4.0)
-    burst = random.uniform(15, 30) if random.random() < 0.12 else 0.0
+def transmit_packet(payload: dict) -> bool:
+    """Invia un pacchetto acustico via POST verso /api/telemetry/reading."""
+    global http_session
+    if http_session is None:
+        http_session = init_optimized_http_session()
+    try:
+        t0 = time.time()
+        res = http_session.post(SERVER_URL, json=payload, timeout=2.0)
+        lat_ms = (time.time() - t0) * 1000
+        if res.status_code in (200, 201):
+            db = payload['sound_intensity']
+            print(f"[{time.strftime('%H:%M:%S')}] \033[32m[OK 201]\033[0m Trasmessi {db:>3} dB al Server Master ({lat_ms:.1f}ms) | Coda RAM: {len(ram_telemetry_queue)}")
+            return True
+        else:
+            print(f"[!] Warning HTTP {res.status_code}: {res.text[:80]}")
+            return False
+    except Exception as e:
+        print(f"[!] Connessione Wi-Fi assente ({e.__class__.__name__}). Pacchetto salvato nella RAM dell'Arduino...")
+        return False
 
-    measured_db = int(round(base_db + noise + burst))
-    return max(30, min(120, measured_db))
-
-def sampling_worker():
-    """
-    Thread di acquisizione acustica a 1 Hz: raccoglie il dato
-    e lo accoda nella memoria RAM dell'Arduino Uno Q.
-    """
-    global running
-    print(f"[*] Thread di campionamento acustico attivo su {STATION_ID}")
-
-    while running:
-        start_time = time.time()
-        sound_db = simulate_high_precision_audio_adc()
-        timestamp_ms = int(time.time() * 1000)
-
-        payload = {
-            "station_id": STATION_ID,
-            "name": STATION_NAME,
-            "latitude": LATITUDE,
-            "longitude": LONGITUDE,
-            "sound_intensity": sound_db,  # unsigned int
-            "timestamp": timestamp_ms,
-            "api_key": API_KEY,
-        }
-
-        with queue_lock:
-            ram_telemetry_queue.append(payload)
-
-        # Mantiene il ritmo esatto di 1 secondo
-        elapsed = time.time() - start_time
-        sleep_time = max(0.01, SAMPLING_INTERVAL_SEC - elapsed)
-        time.sleep(sleep_time)
 
 def transmission_worker():
-    """
-    Thread di trasmissione Wi-Fi HTTP: invia i dati dalla RAM al Master Next.js
-    utilizzando il pool Keep-Alive persistente.
-    """
+    """Thread di trasmissione asincrono: invia i dati dalla RAM al Master."""
     global running
-    session = init_optimized_http_session()
-    print(f"[*] Thread di trasmissione Wi-Fi attivo verso {SERVER_URL}")
-
     while running:
-        payload_to_send: Optional[dict] = None
-
+        payload_to_send = None
         with queue_lock:
             if ram_telemetry_queue:
                 payload_to_send = ram_telemetry_queue.popleft()
 
         if payload_to_send:
-            try:
-                res = session.post(SERVER_URL, json=payload_to_send, timeout=1.5)
-                if res.status_code == 201:
-                    print(f"[{time.strftime('%H:%M:%S')}] OK: {payload_to_send['sound_intensity']} dB trasmessi al Master (Coda RAM: {len(ram_telemetry_queue)})")
-                else:
-                    print(f"[!] Warning HTTP {res.status_code}: {res.text}")
-                    # Reinserimento in RAM se errore server
-                    with queue_lock:
-                        ram_telemetry_queue.appendleft(payload_to_send)
-                    time.sleep(1.0)
-            except Exception as e:
-                print(f"[!] Errore connessione Wi-Fi ({e}). Pacchetto conservato nella RAM dell'Arduino Uno Q...")
+            ok = transmit_packet(payload_to_send)
+            if not ok:
                 with queue_lock:
                     ram_telemetry_queue.appendleft(payload_to_send)
                 time.sleep(2.0)
         else:
             time.sleep(0.05)
 
+
+# =============================================================================
+# 5. LOOP PRINCIPALE DI ACQUISIZIONE ED INVIO
+# =============================================================================
+def loop():
+    """Funzione di loop chiamata continuamente dall'Arduino App Framework o dal main."""
+    try:
+        # 1. Registra audio hardware dal microfono (arecord dura RECORD_DURATION_SEC)
+        proc = subprocess.run(ARECORD_CMD, capture_output=True)
+        if proc.returncode != 0:
+            err_msg = proc.stderr.decode(errors='ignore').strip()
+            print(f"[!] Errore arecord ({ARECORD_DEVICE}): {err_msg[:60]}")
+            # Fallback temporaneo se il dispositivo hw:0,2 non risponde
+            rms_db, peak_db = -45.0, -25.0
+        else:
+            rms_db, peak_db = get_wav_db(AUDIONAME)
+
+        # 2. Conversione in decibel SPL calibrati
+        livello = dbfs_to_scala(rms_db)
+        picco = dbfs_to_scala(peak_db)
+        db_int = int(round(livello))
+
+        # Stampa su console Arduino
+        print(f"[{time.strftime('%H:%M:%S')}] Rilevati: {db_int:>3} dB ({classifica(livello)}) | picco {picco:.1f} dB [RMS {rms_db:.1f} dBFS]")
+
+        # 3. Costruzione payload per il Server Master
+        payload = {
+            "station_id": STATION_ID,
+            "name": STATION_NAME,
+            "latitude": LATITUDE,
+            "longitude": LONGITUDE,
+            "sound_intensity": db_int,
+            "timestamp": int(time.time() * 1000),
+            "api_key": API_KEY,
+        }
+
+        # 4. Accodamento in RAM (trasmissione asincrona e robusta)
+        with queue_lock:
+            ram_telemetry_queue.append(payload)
+
+        # 5. Notifica locale all'STM32 via Seriale (se collegato)
+        if serial:
+            try:
+                ser = serial.Serial(SERIAL_PORT, SERIAL_BAUD, timeout=0.1)
+                ser.write(f"NOISE:{db_int}\n".encode())
+                ser.close()
+            except Exception:
+                pass
+
+    except Exception:
+        traceback.print_exc()
+
+    time.sleep(0.5)
+
+
+# =============================================================================
+# 6. AVVIO APPLICAZIONE (APP.RUN O STANDALONE)
+# =============================================================================
 if __name__ == '__main__':
-    print("=========================================================")
-    print("   AVVIO NOISE CLIENT - ARDUINO UNO Q (4GB RAM)         ")
-    print(f"   Stazione: {STATION_NAME} ({STATION_ID})               ")
-    print(f"   Target Master Server: {SERVER_URL}                   ")
-    print("=========================================================")
+    print("=========================================================================")
+    print("   ARDUINO UNO Q (4GB) - NOISE MONITOR TELEMETRY CLIENT                  ")
+    print(f"   Stazione ID: {STATION_ID} ({STATION_NAME})                            ")
+    print(f"   Server Target: {SERVER_URL}                                           ")
+    print(f"   Dispositivo Audio: {ARECORD_DEVICE} ({AUDIONAME})                      ")
+    print("=========================================================================")
 
-    t_sample = threading.Thread(target=sampling_worker, daemon=True)
+    # Avvio thread di trasmissione asincrona in background
     t_trans = threading.Thread(target=transmission_worker, daemon=True)
-
-    t_sample.start()
     t_trans.start()
 
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nArresto client Arduino Uno Q...")
-        running = False
+    # Se l'App Framework Arduino è presente esegue App.run(user_loop=loop), altrimenti loop standard
+    if App is not None and hasattr(App, 'run'):
+        print("[*] Avvio tramite Arduino App Framework...")
+        App.run(user_loop=loop)
+    else:
+        print("[*] Avvio in modalità standalone Python...")
+        try:
+            while True:
+                loop()
+        except KeyboardInterrupt:
+            print("\nArresto client Arduino...")
+            running = False

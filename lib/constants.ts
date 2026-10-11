@@ -3,6 +3,13 @@
 // Raggio di copertura fisso per stazione acustica (15 metri come richiesto)
 export const NOISE_RADIUS_METERS = 15;
 
+// Raggio di allerta predefinito per le attività/utenti (parametrizzato e modificabile per utente, default 150 metri)
+export const DEFAULT_ALERT_RADIUS_METERS = 150;
+
+// Configurazione Bot Telegram per allerte acustiche (caricata da variabili d'ambiente)
+export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
+export const TELEGRAM_BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME || 'NoiseTurin_bot';
+
 // Coordinate centrali della città di Torino e livello di zoom consigliato
 export const TURIN_CENTER: [number, number] = [45.0683, 7.6830]; // [lat, lng]
 export const TURIN_CENTER_LNG_LAT: [number, number] = [7.6830, 45.0683]; // [lng, lat] per MapLibre
@@ -31,9 +38,8 @@ export const FRONTEND_REFRESH_INTERVAL_MS = 60 * 1000;
 // ALLERTA RUMORE PERSISTENTE (ESERCENTI)
 // ==========================================
 
-// Soglia sonora oltre la quale una lettura è considerata "volume elevato" (dB).
-// Valori > 65 dB corrispondono alle bande "Medio", "Forte" e "Critico" (vedi getNoiseLevel).
-export const NOISE_ALERT_THRESHOLD_DB = 65;
+// Soglia sonora oltre la quale scatta l'allerta (dB) - configurata a 70 dB come da richiesta utente
+export const NOISE_ALERT_THRESHOLD_DB = 70;
 
 // Durata minima di rumore elevato e continuativo prima di inviare l'allerta: 10 minuti
 export const NOISE_ALERT_PERSISTENCE_MS = 10 * 60 * 1000;
@@ -43,6 +49,10 @@ export const NOISE_ALERT_QUIET_GRACE_MS = 60 * 1000;
 
 // Intervallo minimo tra due allerte per la stessa violazione (anti-spam): 10 minuti
 export const NOISE_ALERT_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000;
+
+// Finestra temporale massima di validità dell'evento sonoro (2 minuti):
+// Previene l'invio di allerte su dati storici o vecchi elaborati all'avvio del server
+export const MAX_ALERT_EVENT_AGE_MS = 2 * 60 * 1000;
 
 // Raggio attorno alla stazione entro cui gli esercenti sono considerati "limitrofi" e allertati
 export const COMPANY_ALERT_RADIUS_METERS = 200;
@@ -109,3 +119,40 @@ export function getNoiseLevel(intensity: number): NoiseLevelInfo {
     };
   }
 }
+
+// Funzione di interpolazione lineare (LERP) per colori RGB
+export function interpolateRgb(
+  color1: [number, number, number], 
+  color2: [number, number, number], 
+  factor: number
+): string {
+  const f = Math.max(0, Math.min(1, factor));
+  const r = Math.round(color1[0] + (color2[0] - color1[0]) * f);
+  const g = Math.round(color1[1] + (color2[1] - color1[1]) * f);
+  const b = Math.round(color1[2] + (color2[2] - color1[2]) * f);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+// Restituisce un colore continuo, graduale e privo di scatti repentini in base ai decibel reali
+export function getSmoothNoiseColor(intensity: number): string {
+  if (intensity <= 38) {
+    return 'rgb(241, 245, 249)'; // Bianco / Grigio ghiaccio (< 40 dB)
+  } else if (intensity <= 60) {
+    // Transizione graduale da Bianco a Verde
+    const f = (intensity - 38) / (60 - 38);
+    return interpolateRgb([241, 245, 249], [34, 197, 94], f);
+  } else if (intensity <= 75) {
+    // Transizione graduale da Verde a Giallo ambra
+    const f = (intensity - 60) / (75 - 60);
+    return interpolateRgb([34, 197, 94], [234, 179, 8], f);
+  } else if (intensity <= 90) {
+    // Transizione graduale da Giallo a Rosso fuoco
+    const f = (intensity - 75) / (90 - 75);
+    return interpolateRgb([234, 179, 8], [255, 23, 68], f);
+  } else {
+    // Transizione graduale da Rosso fuoco a Viola fluorescente
+    const f = Math.min(1, (intensity - 90) / 20);
+    return interpolateRgb([255, 23, 68], [213, 0, 249], f);
+  }
+}
+

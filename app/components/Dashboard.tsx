@@ -27,49 +27,94 @@ export default function Dashboard() {
   const [stations, setStations] = useState<StationMapItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
-  const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number>(60);
+  const [isStreamConnected, setIsStreamConnected] = useState<boolean>(false);
   const [isSimulatingContinuous, setIsSimulatingContinuous] = useState<boolean>(false);
-  const [showDummyStations, setShowDummyStations] = useState<boolean>(false);
+  const [showDummyStations, setShowDummyStations] = useState<boolean>(true);
   const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
   const [simMessage, setSimMessage] = useState<string>('');
   const [showArduinoSnippet, setShowArduinoSnippet] = useState<boolean>(false);
+  const [showBotModal, setShowBotModal] = useState<boolean>(false);
 
-  // 1. Fetch stazioni attuali (filtrando o includendo i dati dummy su richiesta)
-  const fetchStations = useCallback(async () => {
+  // Recupero snapshot immediato via HTTP (istante 0ms senza attendere handshake SSE)
+  const fetchStationsSnapshot = useCallback(async () => {
     try {
       const url = showDummyStations ? '/api/stations?filter=all' : '/api/stations?filter=live_only';
       const res = await fetch(url, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setStations(data.stations || []);
-        setLastRefreshedAt(new Date());
-        setSecondsUntilRefresh(60); // Reset timer 1 minuto
+        setLastRefreshedAt(new Date(data.timestamp || Date.now()));
+        setIsLoading(false);
       }
     } catch (err) {
-      console.error('Errore durante il caricamento delle stazioni:', err);
-    } finally {
-      setIsLoading(false);
+      console.error('Errore snapshot iniziale:', err);
     }
   }, [showDummyStations]);
 
-  // 2. Timer di Auto-refresh ogni 1 minuto (60 secondi)
+  // 1. Snapshot iniziale HTTP immediato + Streaming Just-in-Time (SSE)
   useEffect(() => {
-    fetchStations();
+    setIsLoading(true);
+    // Caricamento snapshot prioritario immediato
+    fetchStationsSnapshot();
 
-    const timer = setInterval(() => {
-      setSecondsUntilRefresh((prev) => {
-        if (prev <= 1) {
-          fetchStations();
-          return 60;
+    const filterParam = showDummyStations ? 'all' : 'live_only';
+    const eventSource = new EventSource(`/api/telemetry/stream?filter=${filterParam}`);
+
+    eventSource.addEventListener('init', (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data);
+        if (payload.stations && payload.stations.length > 0) {
+          setStations(payload.stations);
         }
-        return prev - 1;
-      });
-    }, 1000);
+        setIsStreamConnected(true);
+        setLastRefreshedAt(new Date(payload.timestamp || Date.now()));
+        setIsLoading(false);
+      } catch (err) {
+        console.error('Errore parsing init stream:', err);
+      }
+    });
 
-    return () => clearInterval(timer);
-  }, [fetchStations]);
+    eventSource.addEventListener('reading', (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data);
+        const incoming = payload.station;
+        if (!incoming) return;
 
-  // 3. Simulatore continuo (~1 secondo per campionamento Arduino nel DB)
+        setStations((prev) => {
+          const idx = prev.findIndex((s) => s.id === incoming.id);
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = {
+              ...copy[idx],
+              ...incoming,
+            };
+            return copy;
+          } else {
+            return [...prev, incoming];
+          }
+        });
+        setLastRefreshedAt(new Date());
+        setIsStreamConnected(true);
+      } catch (err) {
+        console.error('Errore parsing reading stream:', err);
+      }
+    });
+
+    eventSource.onopen = () => {
+      setIsStreamConnected(true);
+    };
+
+    eventSource.onerror = () => {
+      setIsStreamConnected(false);
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [showDummyStations, fetchStationsSnapshot]);
+
+
+  // 2. Simulatore continuo (~1 secondo per campionamento Arduino nel DB se attivato manualmente)
   useEffect(() => {
     if (!isSimulatingContinuous) return;
 
@@ -84,14 +129,13 @@ export default function Dashboard() {
     return () => clearInterval(simInterval);
   }, [isSimulatingContinuous]);
 
-  // Trigger manuale di un ciclo di simulazione
+  // Trigger manuale di un singolo impulso dummy
   const triggerSingleSimulation = async () => {
     setSimMessage('Invio dati campionari Arduino in corso...');
     try {
       const res = await fetch('/api/simulator', { method: 'POST' });
       if (res.ok) {
         setSimMessage('Dati campionari acquisiti e memorizzati!');
-        await fetchStations();
       }
     } catch {
       setSimMessage('Errore durante la simulazione.');
@@ -145,33 +189,44 @@ export default function Dashboard() {
 
         {/* CONTROLLI E AZIONI RAPIDE */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-          <div style={{ fontSize: '12px', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span>Prossimo refresh:</span>
-            <strong style={{ 
-              backgroundColor: '#1e293b', 
-              padding: '2px 8px', 
-              borderRadius: '4px', 
-              color: '#f8fafc',
-              fontVariantNumeric: 'tabular-nums' 
-            }}>
-              {secondsUntilRefresh}s
-            </strong>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '7px',
+            backgroundColor: isStreamConnected ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+            border: isStreamConnected ? '1px solid #22c55e' : '1px solid #ef4444',
+            padding: '5px 12px',
+            borderRadius: '20px',
+            fontSize: '12px',
+            color: isStreamConnected ? '#4ade80' : '#fca5a5',
+            fontWeight: 600,
+          }}>
+            <span style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: isStreamConnected ? '#22c55e' : '#ef4444',
+              boxShadow: isStreamConnected ? '0 0 8px #22c55e' : 'none',
+              display: 'inline-block',
+            }} />
+            <span>{isStreamConnected ? 'Stream SSE Just-in-Time: ATTIVO' : 'Stream: Riconnessione...'}</span>
           </div>
 
           <button
-            onClick={() => fetchStations()}
+            onClick={() => fetchStationsSnapshot()}
             style={{
               padding: '6px 12px',
-              backgroundColor: '#2563eb',
-              color: '#ffffff',
-              border: 'none',
+              backgroundColor: '#1e293b',
+              color: '#cbd5e1',
+              border: '1px solid #475569',
               borderRadius: '5px',
               fontSize: '12px',
               cursor: 'pointer',
               fontWeight: 500
             }}
+            title="Richiede manualmente uno snapshot di tutte le stazioni"
           >
-            Aggiorna Ora
+            Aggiorna Snapshot
           </button>
 
           <button
@@ -188,7 +243,7 @@ export default function Dashboard() {
             }}
             title="Oscura o mostra le stazioni pre-generate dummy"
           >
-            {showDummyStations ? '⚪ Modalità: Tutte le Stazioni' : '🟢 Modalità: Solo Stazioni Live (Debug Reale)'}
+            {showDummyStations ? '⚪ Modalità: Tutte le Stazioni' : '🟢 Modalità: Solo Stazione Reale'}
           </button>
 
           <button
@@ -236,6 +291,47 @@ export default function Dashboard() {
           >
             {showArduinoSnippet ? 'Chiudi Guida Slave' : 'Codice Arduino'}
           </button>
+
+          <button
+            onClick={() => setShowBotModal(true)}
+            style={{
+              padding: '6px 12px',
+              backgroundColor: '#0284c7',
+              color: '#ffffff',
+              border: '1px solid #38bdf8',
+              borderRadius: '5px',
+              fontSize: '12px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+            title="Configura e ricevi allerte rumore via Telegram"
+          >
+            <span>🤖 Bot Telegram (@NoiseTurin_bot)</span>
+          </button>
+
+          <a
+            href="/admin"
+            id="header-admin-portal-button"
+            style={{
+              padding: '6px 12px',
+              backgroundColor: '#1e293b',
+              color: '#38bdf8',
+              border: '1px solid #0284c7',
+              borderRadius: '5px',
+              fontSize: '12px',
+              textDecoration: 'none',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+            title="Accesso riservato amministratori: genera chiavi monouso e gestisci operatori"
+          >
+            <span>🛡️ Portale Admin</span>
+          </a>
         </div>
       </header>
 
@@ -366,25 +462,43 @@ export default function Dashboard() {
                         transition: 'all 0.15s ease-in-out'
                       }}
                     >
-                      <div style={{ maxWidth: '190px' }}>
+                      <div style={{ maxWidth: '185px' }}>
                         <div style={{ fontWeight: 600, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {st.name}
                         </div>
-                        <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                          ID: {st.id} • R: {NOISE_RADIUS_METERS}m
+                        <div style={{ fontSize: '11px', color: '#64748b' }}>
+                          ID: <code>{st.id}</code> • Raggio: {NOISE_RADIUS_METERS}m
+                        </div>
+                        <div style={{ fontSize: '10px', marginTop: '3px' }}>
+                          {st.last_reading_time && (Date.now() - st.last_reading_time < 3500) ? (
+                            <span style={{ color: '#16a34a', fontWeight: 600 }}>● Stream in tempo reale</span>
+                          ) : (
+                            <span style={{ color: '#94a3b8' }}>○ In attesa (avvia <code>npm run mic</code>)</span>
+                          )}
+                        </div>
+                        {/* Barra di intensità graduata fluida */}
+                        <div style={{ width: '100%', height: '4px', backgroundColor: '#e2e8f0', borderRadius: '2px', overflow: 'hidden', marginTop: '6px' }}>
+                          <div style={{
+                            height: '100%',
+                            width: `${Math.min(100, Math.max(6, ((st.current_intensity - 30) / (105 - 30)) * 100))}%`,
+                            backgroundColor: level.fillColor,
+                            transition: 'width 0.5s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.5s ease',
+                          }} />
                         </div>
                       </div>
 
                       <div style={{ textAlign: 'right' }}>
                         <div style={{
                           display: 'inline-block',
-                          padding: '2px 8px',
+                          padding: '3px 10px',
                           borderRadius: '12px',
                           backgroundColor: level.fillColor,
                           color: level.level === 'quiet' ? '#0f172a' : '#ffffff',
                           fontWeight: 'bold',
                           fontSize: '12px',
-                          border: `1px solid ${level.color}`
+                          border: `1px solid ${level.color}`,
+                          transition: 'background-color 0.5s ease, color 0.5s ease, border-color 0.5s ease',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.06)'
                         }}>
                           {st.current_intensity} dB
                         </div>
@@ -408,7 +522,7 @@ export default function Dashboard() {
             alignItems: 'center'
           }}>
             <span>Ultimo aggiornamento:</span>
-            <span>{lastRefreshedAt.toLocaleTimeString('it-IT')}</span>
+            <span suppressHydrationWarning>{lastRefreshedAt.toLocaleTimeString('it-IT')}</span>
           </div>
         </aside>
       </div>
@@ -538,6 +652,128 @@ httpClient.addHeader("x-api-key", "arduino-torino-noise-secret-2026");`}
                 }}
               >
                 Chiudi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CONFIGURAZIONE BOT TELEGRAM */}
+      {showBotModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.75)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          backdropFilter: 'blur(3px)'
+        }}>
+          <div style={{
+            backgroundColor: '#ffffff',
+            borderRadius: '12px',
+            width: '90%',
+            maxWidth: '680px',
+            maxHeight: '85vh',
+            overflowY: 'auto',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.3)',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            <div style={{
+              padding: '16px 20px',
+              borderBottom: '1px solid #e2e8f0',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              backgroundColor: '#0f172a',
+              color: '#ffffff',
+              borderRadius: '12px 12px 0 0'
+            }}>
+              <h3 style={{ margin: 0, fontSize: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>🤖</span> Bot Telegram Allerte Acustiche (@NoiseTurin_bot)
+              </h3>
+              <button
+                onClick={() => setShowBotModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#94a3b8',
+                  fontSize: '20px',
+                  cursor: 'pointer',
+                  padding: '0 4px'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ padding: '20px', fontSize: '13px', lineHeight: '1.6', color: '#334155' }}>
+              <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '12px', marginBottom: '16px' }}>
+                <strong style={{ color: '#166534' }}>🎯 Come funziona il Bot Telegram:</strong>
+                <p style={{ margin: '4px 0 0 0', color: '#15803d' }}>
+                  Il bot monitora in tempo reale le emissioni sonore a Torino e ti avvisa immediatamente se una cella acustica entro <b>150 metri</b> (raggio configurabile) dalla tua attività supera la soglia critica di rumore.
+                </p>
+              </div>
+
+              <h4 style={{ margin: '12px 0 6px 0', color: '#0f172a' }}>1. Avvio del Bot e Autenticazione</h4>
+              <p style={{ margin: 0 }}>
+                Cerca <b>@NoiseTurin_bot</b> su Telegram oppure apri il link <a href="https://t.me/NoiseTurin_bot" target="_blank" rel="noreferrer" style={{ color: '#0284c7', fontWeight: 600 }}>t.me/NoiseTurin_bot</a>. Premi <code>/start</code> e inserisci la tua <b>chiave monouso</b> rilasciata dall&apos;amministrazione comunale:
+              </p>
+              <div style={{ backgroundColor: '#1e293b', color: '#38bdf8', padding: '10px 14px', borderRadius: '6px', margin: '8px 0', fontSize: '12px' }}>
+                <span style={{ color: '#94a3b8' }}>Formato chiave monouso:</span> <code style={{ color: '#38bdf8', fontWeight: 700 }}>TN-XXXX-XXXX-XXXX</code>
+                <div style={{ fontSize: '11px', color: '#cbd5e1', marginTop: '4px' }}>
+                  Ogni attività riceve una chiave strettamente monouso generata dall&apos;amministratore nel <a href="/admin" target="_blank" style={{ color: '#38bdf8', textDecoration: 'underline' }}>Pannello Amministrazione</a>.
+                </div>
+              </div>
+
+              <h4 style={{ margin: '14px 0 6px 0', color: '#0f172a' }}>2. Registrazione Indirizzo Sede / Esercizio</h4>
+              <p style={{ margin: 0 }}>
+                Invia come messaggio la via e il numero civico a Torino (es. <code>Via Po 14</code> oppure <code>Via Roma 10</code>). Il bot geolocalizzerà la tua attività e calcolerà in automatico tutte le celle acustiche nel raggio di 150m.
+              </p>
+
+              <h4 style={{ margin: '14px 0 6px 0', color: '#0f172a' }}>3. Comandi Telegram Disponibili</h4>
+              <ul style={{ margin: '6px 0 12px 20px', padding: 0 }}>
+                <li><code>/raggio &lt;metri&gt;</code> — Modifica il perimetro di controllo (default: 150m, non hardcoddato).</li>
+                <li><code>/stazioni</code> — Elenca le celle acustiche attualmente monitorate entro il tuo raggio.</li>
+                <li><code>/stato</code> — Mostra sede registrata, coordinate geodetiche e stato attivo.</li>
+                <li><code>/test_allerta</code> — Invia un test di notifica allerta alla tua chat.</li>
+              </ul>
+
+              <h4 style={{ margin: '14px 0 6px 0', color: '#0f172a' }}>4. API Protetta per Notifiche Rumore</h4>
+              <p style={{ margin: '0 0 6px 0' }}>
+                L&apos;API protetta <code>POST /api/alerts/noise</code> accetta la richiesta protetta con <code>x-api-key</code> e inoltra l&apos;allerta via Telegram a tutte le attività nel raggio:
+              </p>
+              <pre style={{ backgroundColor: '#1e293b', color: '#f8fafc', padding: '10px', borderRadius: '6px', fontSize: '11px', fontFamily: 'Consolas, monospace', overflowX: 'auto' }}>
+{`curl -X POST http://localhost:3000/api/alerts/noise \\
+  -H "Content-Type: application/json" \\
+  -H "x-api-key: dev-sensor-secret-key-2026" \\
+  -d '{
+    "station_id": "ard-uno-q-real-mic",
+    "sound_intensity": 88,
+    "message": "Superamento soglia consentita in orario notturno"
+  }'`}
+              </pre>
+            </div>
+
+            <div style={{ padding: '12px 20px', borderTop: '1px solid #e2e8f0', textAlign: 'right', backgroundColor: '#f8fafc', borderRadius: '0 0 12px 12px' }}>
+              <button
+                onClick={() => setShowBotModal(false)}
+                style={{
+                  padding: '6px 14px',
+                  backgroundColor: '#0f172a',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                Ho Capito / Chiudi
               </button>
             </div>
           </div>

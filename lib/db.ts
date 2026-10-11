@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import { hashPassword, generateBotApiKey } from './crypto-auth';
 
 // Singleton del database
 let dbInstance: Database.Database | null = null;
@@ -78,7 +79,95 @@ function initializeDatabase(db: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_noise_alerts_time
       ON noise_alerts(triggered_at DESC);
+
+    CREATE TABLE IF NOT EXISTS bot_auth_keys (
+      auth_key TEXT PRIMARY KEY,
+      business_name TEXT,
+      description TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      is_used INTEGER NOT NULL DEFAULT 0,
+      used_by_chat_id TEXT,
+      used_at INTEGER,
+      created_by TEXT,
+      revoked_at INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'operator', -- 'superadmin' | 'operator'
+      is_active INTEGER NOT NULL DEFAULT 1,
+      created_by TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_login_at INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS telegram_subscribers (
+      chat_id TEXT PRIMARY KEY,
+      username TEXT,
+      first_name TEXT,
+      auth_key TEXT,
+      is_authenticated INTEGER NOT NULL DEFAULT 0,
+      address TEXT,
+      latitude REAL,
+      longitude REAL,
+      alert_radius_meters INTEGER NOT NULL DEFAULT 150,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      last_alert_at INTEGER NOT NULL DEFAULT 0,
+      opening_hours TEXT,
+      google_place_id TEXT,
+      osm_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
+
+  // Migrazioni colonne bot_auth_keys per supporto chiavi monouso e indirizzo pre-configurato
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN business_name TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN address TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN latitude REAL;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN longitude REAL;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN alert_radius_meters INTEGER NOT NULL DEFAULT 150;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN is_used INTEGER NOT NULL DEFAULT 0;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN used_by_chat_id TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN used_at INTEGER;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN created_by TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE bot_auth_keys ADD COLUMN revoked_at INTEGER;`); } catch {}
+
+  // Revoca permanente di tutte le chiavi di test fittizie e disattivazione account associati
+  try {
+    db.exec(`
+      UPDATE bot_auth_keys 
+      SET is_active = 0, revoked_at = strftime('%s','now')*1000 
+      WHERE auth_key IN ('TORINO-ALERT-KEY-2026', 'BAR-SAN-SALVARIO-01', 'COMMERCIO-VIA-PO-14');
+      
+      UPDATE telegram_subscribers 
+      SET is_authenticated = 0, is_active = 0, auth_key = NULL 
+      WHERE auth_key IN ('TORINO-ALERT-KEY-2026', 'BAR-SAN-SALVARIO-01', 'COMMERCIO-VIA-PO-14')
+         OR auth_key IS NULL;
+    `);
+  } catch (err) {
+    console.warn('[DB] Revoca chiavi di test:', err);
+  }
+
+  // Inizializzazione Superadmin iniziale se tabella vuota
+  try {
+    const adminCount = db.prepare('SELECT count(*) as count FROM admin_users').get() as { count: number };
+    if (adminCount.count === 0) {
+      const initialUser = process.env.INITIAL_SUPERADMIN_USER || 'admin';
+      const initialPass = process.env.INITIAL_SUPERADMIN_PASSWORD || 'AdminTorino2026!';
+      const { hash, salt } = hashPassword(initialPass);
+      db.prepare(`
+        INSERT INTO admin_users (username, password_hash, salt, role, is_active, created_by)
+        VALUES (?, ?, ?, 'superadmin', 1, 'system')
+      `).run(initialUser, hash, salt);
+      console.log(`[DB] Account Superadmin creato: ${initialUser}`);
+    }
+  } catch (err) {
+    console.warn('[DB] Inizializzazione Superadmin:', err);
+  }
 
   // Migrazione retrocompatibile per colonna is_dummy se tabella preesistente
   try {
@@ -95,6 +184,23 @@ function initializeDatabase(db: Database.Database) {
   }
   try {
     db.exec(`ALTER TABLE companies ADD COLUMN osm_id TEXT;`);
+  } catch {
+    // La colonna esiste già
+  }
+
+  // Migrazioni retrocompatibili per gli orari/apertura degli iscritti al bot
+  try {
+    db.exec(`ALTER TABLE telegram_subscribers ADD COLUMN opening_hours TEXT;`);
+  } catch {
+    // La colonna esiste già
+  }
+  try {
+    db.exec(`ALTER TABLE telegram_subscribers ADD COLUMN google_place_id TEXT;`);
+  } catch {
+    // La colonna esiste già
+  }
+  try {
+    db.exec(`ALTER TABLE telegram_subscribers ADD COLUMN osm_id TEXT;`);
   } catch {
     // La colonna esiste già
   }
@@ -271,8 +377,8 @@ export function insertNoiseReading(
   const isDummyVal = stationMeta?.is_dummy ? 1 : 0;
 
   // Verifica esistenza stazione: se non esiste ancora, auto-registrazione dinamica
-  const stationExists = db.prepare('SELECT id FROM stations WHERE id = ?').get(station_id);
-  if (!stationExists) {
+  let station = db.prepare('SELECT id, name, latitude, longitude, is_dummy FROM stations WHERE id = ?').get(station_id) as any;
+  if (!station) {
     const name = stationMeta?.name || `Stazione Arduino (${station_id})`;
     // Coordinate fornite dal dispositivo o fallback su Torino centro
     const lat = stationMeta?.latitude ?? 45.0705;
@@ -282,6 +388,14 @@ export function insertNoiseReading(
       INSERT INTO stations (id, name, latitude, longitude, is_dummy)
       VALUES (?, ?, ?, ?, ?)
     `).run(station_id, name, lat, lng, isDummyVal);
+
+    station = {
+      id: station_id,
+      name,
+      latitude: lat,
+      longitude: lng,
+      is_dummy: isDummyVal,
+    };
   }
 
   const stmt = db.prepare(`
@@ -290,6 +404,24 @@ export function insertNoiseReading(
   `);
 
   const result = stmt.run(station_id, sound_intensity, time);
+
+  // Emetti evento real-time per lo stream Just-in-Time
+  try {
+    const { telemetryEmitter } = require('./events');
+    telemetryEmitter.emit('reading', {
+      id: station.id,
+      name: station.name,
+      latitude: station.latitude,
+      longitude: station.longitude,
+      is_dummy: Boolean(station.is_dummy),
+      current_intensity: sound_intensity,
+      last_reading_time: time,
+      radius_meters: 15,
+    });
+  } catch (err) {
+    console.error('Errore durante l\'emissione evento stream:', err);
+  }
+
   return {
     id: Number(result.lastInsertRowid),
     station_id,
@@ -322,12 +454,12 @@ export function getStationsLive(filterMode: 'all' | 'live_only' | 'dummy_only' =
     FROM stations s
     LEFT JOIN (
       SELECT station_id, sound_intensity, timestamp
-      FROM noise_readings nr1
-      WHERE timestamp = (
-        SELECT MAX(timestamp) 
-        FROM noise_readings nr2 
-        WHERE nr2.station_id = nr1.station_id
-      )
+      FROM (
+        SELECT station_id, sound_intensity, timestamp,
+               ROW_NUMBER() OVER (PARTITION BY station_id ORDER BY id DESC) as rn
+        FROM noise_readings
+      ) sub
+      WHERE sub.rn = 1
     ) r ON s.id = r.station_id
     ${whereClause}
     ORDER BY s.is_dummy ASC, s.name ASC
@@ -499,3 +631,422 @@ export function getRecentAlerts(limit: number = 50): NoiseAlert[] {
   const db = getDb();
   return db.prepare('SELECT * FROM noise_alerts ORDER BY triggered_at DESC LIMIT ?').all(limit) as NoiseAlert[];
 }
+
+// ==========================================
+// UTENTI ED ISCRITTI TELEGRAM BOT (AREA 150M)
+// ==========================================
+
+export interface TelegramSubscriber {
+  chat_id: string;
+  username: string | null;
+  first_name: string | null;
+  auth_key: string | null;
+  is_authenticated: number;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  alert_radius_meters: number;
+  is_active: number;
+  last_alert_at: number;
+  opening_hours: string | null;
+  google_place_id: string | null;
+  osm_id: string | null;
+  created_at: string;
+}
+
+export interface BotAuthKey {
+  auth_key: string;
+  business_name: string | null;
+  description: string | null;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  alert_radius_meters: number;
+  is_active: number;
+  is_used: number;
+  used_by_chat_id: string | null;
+  used_at: number | null;
+  created_by: string | null;
+  revoked_at: number | null;
+  created_at: string;
+}
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  password_hash: string;
+  salt: string;
+  role: 'superadmin' | 'operator';
+  is_active: number;
+  created_by: string | null;
+  created_at: string;
+  last_login_at: number | null;
+}
+
+// Verifica se una chiave di autorizzazione del Bot è valida, attiva e non ancora utilizzata
+export function verifyBotAuthKey(key: string): boolean {
+  const db = getDb();
+  const row = db.prepare('SELECT auth_key FROM bot_auth_keys WHERE auth_key = ? AND is_active = 1 AND is_used = 0').get(key.trim());
+  return Boolean(row);
+}
+
+// Riscatta una chiave monouso per conto di una chat Telegram e associa automaticamente indirizzo e coordinate pre-configurati dall'amministratore
+export function redeemBotAuthKey(
+  key: string,
+  chatId: string
+): {
+  success: boolean;
+  error?: string;
+  business_name?: string;
+  address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  alert_radius_meters?: number;
+} {
+  const db = getDb();
+  const cleanKey = key.trim();
+  const row = db
+    .prepare('SELECT * FROM bot_auth_keys WHERE auth_key = ?')
+    .get(cleanKey) as BotAuthKey | undefined;
+
+  if (!row || row.is_active !== 1) {
+    return {
+      success: false,
+      error: 'Chiave non valida o revocata dall\'amministrazione.',
+    };
+  }
+
+  if (row.is_used === 1) {
+    if (row.used_by_chat_id === chatId) {
+      return {
+        success: true,
+        business_name: row.business_name || row.description || 'Attività registrata',
+        address: row.address,
+        latitude: row.latitude,
+        longitude: row.longitude,
+        alert_radius_meters: row.alert_radius_meters || 150,
+      };
+    }
+    return {
+      success: false,
+      error: 'Questa chiave è già stata utilizzata da un\'altra utenza. Ogni chiave è strettamente monouso.',
+    };
+  }
+
+  // Riscatto completato: segna la chiave come usata dalla chat
+  db.prepare(`
+    UPDATE bot_auth_keys 
+    SET is_used = 1, used_by_chat_id = ?, used_at = ? 
+    WHERE auth_key = ?
+  `).run(chatId, Date.now(), row.auth_key);
+
+  // CAMBIO DI PARADIGMA: associa automaticamente all'iscritto Telegram la via, le coordinate e il raggio inseriti dall'amministratore
+  upsertTelegramSubscriber({
+    chat_id: chatId,
+    auth_key: row.auth_key,
+    is_authenticated: 1,
+    is_active: 1,
+    address: row.address || row.business_name || 'Torino',
+    latitude: row.latitude,
+    longitude: row.longitude,
+    alert_radius_meters: row.alert_radius_meters || 150,
+  });
+
+  return {
+    success: true,
+    business_name: row.business_name || row.description || 'Attività registrata',
+    address: row.address,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    alert_radius_meters: row.alert_radius_meters || 150,
+  };
+}
+
+// Crea una nuova chiave monouso per un'attività con indirizzo e coordinate geocodificate dall'amministratore
+export function createBotAuthKey(
+  input: string | {
+    businessName: string;
+    address?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
+    alertRadiusMeters?: number;
+    createdBy?: string;
+  },
+  fallbackCreatedBy: string = 'admin'
+): BotAuthKey {
+  const db = getDb();
+  const newKey = generateBotApiKey();
+
+  let businessName = '';
+  let address: string | null = null;
+  let latitude: number | null = null;
+  let longitude: number | null = null;
+  let alertRadiusMeters = 150;
+  let createdBy = fallbackCreatedBy;
+
+  if (typeof input === 'string') {
+    businessName = input.trim();
+  } else {
+    businessName = input.businessName.trim();
+    address = input.address ? input.address.trim() : null;
+    latitude = input.latitude ?? null;
+    longitude = input.longitude ?? null;
+    alertRadiusMeters = input.alertRadiusMeters || 150;
+    createdBy = input.createdBy || fallbackCreatedBy;
+  }
+
+  db.prepare(`
+    INSERT INTO bot_auth_keys (
+      auth_key, business_name, description, address, latitude, longitude, alert_radius_meters, is_active, is_used, created_by
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, ?)
+  `).run(
+    newKey,
+    businessName,
+    `Chiave per ${businessName}`,
+    address,
+    latitude,
+    longitude,
+    alertRadiusMeters,
+    createdBy
+  );
+
+  return db.prepare('SELECT * FROM bot_auth_keys WHERE auth_key = ?').get(newKey) as BotAuthKey;
+}
+
+// Revoca una chiave monouso e disattiva contestualmente l'accesso alla chat che la usava
+export function revokeBotAuthKey(key: string): boolean {
+  const db = getDb();
+  const cleanKey = key.trim();
+  const res = db.prepare(`
+    UPDATE bot_auth_keys 
+    SET is_active = 0, revoked_at = ? 
+    WHERE auth_key = ?
+  `).run(Date.now(), cleanKey);
+
+  // Revoca immediata all'utenza Telegram collegata
+  db.prepare(`
+    UPDATE telegram_subscribers 
+    SET is_authenticated = 0, is_active = 0 
+    WHERE auth_key = ?
+  `).run(cleanKey);
+
+  return res.changes > 0;
+}
+
+// Elenco di tutte le chiavi autorizzazione
+export function listBotAuthKeys(): BotAuthKey[] {
+  const db = getDb();
+  return db.prepare('SELECT * FROM bot_auth_keys ORDER BY created_at DESC').all() as BotAuthKey[];
+}
+
+// Crea o aggiorna un iscritto al Bot Telegram
+export function upsertTelegramSubscriber(data: {
+  chat_id: string;
+  username?: string | null;
+  first_name?: string | null;
+  auth_key?: string | null;
+  is_authenticated?: number;
+  address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  alert_radius_meters?: number;
+  is_active?: number;
+  last_alert_at?: number;
+  opening_hours?: string | null;
+  google_place_id?: string | null;
+  osm_id?: string | null;
+}): void {
+  const db = getDb();
+  const existing = db.prepare('SELECT * FROM telegram_subscribers WHERE chat_id = ?').get(data.chat_id) as TelegramSubscriber | undefined;
+
+  if (existing) {
+    db.prepare(`
+      UPDATE telegram_subscribers SET
+        username = COALESCE(?, username),
+        first_name = COALESCE(?, first_name),
+        auth_key = COALESCE(?, auth_key),
+        is_authenticated = COALESCE(?, is_authenticated),
+        address = COALESCE(?, address),
+        latitude = COALESCE(?, latitude),
+        longitude = COALESCE(?, longitude),
+        alert_radius_meters = COALESCE(?, alert_radius_meters),
+        is_active = COALESCE(?, is_active),
+        last_alert_at = COALESCE(?, last_alert_at),
+        opening_hours = COALESCE(?, opening_hours),
+        google_place_id = COALESCE(?, google_place_id),
+        osm_id = COALESCE(?, osm_id)
+      WHERE chat_id = ?
+    `).run(
+      data.username ?? null,
+      data.first_name ?? null,
+      data.auth_key ?? null,
+      data.is_authenticated ?? null,
+      data.address ?? null,
+      data.latitude ?? null,
+      data.longitude ?? null,
+      data.alert_radius_meters ?? null,
+      data.is_active ?? null,
+      data.last_alert_at ?? null,
+      data.opening_hours ?? null,
+      data.google_place_id ?? null,
+      data.osm_id ?? null,
+      data.chat_id
+    );
+  } else {
+    db.prepare(`
+      INSERT INTO telegram_subscribers (
+        chat_id, username, first_name, auth_key, is_authenticated,
+        address, latitude, longitude, alert_radius_meters, is_active, last_alert_at,
+        opening_hours, google_place_id, osm_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      data.chat_id,
+      data.username || null,
+      data.first_name || null,
+      data.auth_key || null,
+      data.is_authenticated ?? 0,
+      data.address || null,
+      data.latitude || null,
+      data.longitude || null,
+      data.alert_radius_meters ?? 150,
+      data.is_active ?? 1,
+      data.last_alert_at ?? 0,
+      data.opening_hours || null,
+      data.google_place_id || null,
+      data.osm_id || null
+    );
+  }
+}
+
+// Imposta lo stato di attività di un iscritto (per il comando /stop)
+export function setSubscriberActive(chat_id: string, is_active: number): number {
+  const db = getDb();
+  const result = db.prepare('UPDATE telegram_subscribers SET is_active = ? WHERE chat_id = ?').run(is_active, chat_id);
+  return result.changes;
+}
+
+// Conteggi per l'endpoint di osservabilità
+export function getSubscriberStats(): { total: number; active: number; authenticated: number } {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
+      SUM(CASE WHEN is_authenticated = 1 THEN 1 ELSE 0 END) as authenticated
+    FROM telegram_subscribers
+  `).get() as { total: number; active: number | null; authenticated: number | null };
+  return {
+    total: row.total ?? 0,
+    active: row.active ?? 0,
+    authenticated: row.authenticated ?? 0,
+  };
+}
+
+// Recupera un iscritto dal suo chat_id
+export function getTelegramSubscriber(chat_id: string): TelegramSubscriber | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM telegram_subscribers WHERE chat_id = ?').get(chat_id) as TelegramSubscriber | undefined;
+}
+
+// Recupera tutti gli iscritti attivi, autenticati e con coordinate configurate
+export function getActiveAuthenticatedSubscribers(): TelegramSubscriber[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT * FROM telegram_subscribers 
+    WHERE is_authenticated = 1 AND is_active = 1 AND latitude IS NOT NULL AND longitude IS NOT NULL
+  `).all() as TelegramSubscriber[];
+}
+
+// Aggiorna il timestamp dell'ultima allerta inviata per prevenire spam
+export function updateSubscriberLastAlert(chat_id: string, timestamp: number = Date.now()): void {
+  const db = getDb();
+  db.prepare('UPDATE telegram_subscribers SET last_alert_at = ? WHERE chat_id = ?').run(timestamp, chat_id);
+}
+
+// ==========================================
+// GESTIONE UTENTI AMMINISTRATIVI (RBAC)
+// ==========================================
+
+export function getAdminUserByUsername(username: string): AdminUser | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM admin_users WHERE username = ? AND is_active = 1').get(username.trim()) as AdminUser | undefined;
+}
+
+export function getAdminUserById(id: number): AdminUser | undefined {
+  const db = getDb();
+  return db.prepare('SELECT * FROM admin_users WHERE id = ? AND is_active = 1').get(id) as AdminUser | undefined;
+}
+
+export function listAdminUsers(): Omit<AdminUser, 'password_hash' | 'salt'>[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT id, username, role, is_active, created_by, created_at, last_login_at 
+    FROM admin_users 
+    ORDER BY id ASC
+  `).all() as Omit<AdminUser, 'password_hash' | 'salt'>[];
+}
+
+export function createAdminUser(
+  username: string,
+  passwordHash: string,
+  salt: string,
+  role: 'superadmin' | 'operator',
+  createdBy: string
+): Omit<AdminUser, 'password_hash' | 'salt'> {
+  const db = getDb();
+  const result = db.prepare(`
+    INSERT INTO admin_users (username, password_hash, salt, role, is_active, created_by)
+    VALUES (?, ?, ?, ?, 1, ?)
+  `).run(username.trim(), passwordHash, salt, role, createdBy);
+
+  return db.prepare(`
+    SELECT id, username, role, is_active, created_by, created_at, last_login_at 
+    FROM admin_users WHERE id = ?
+  `).get(result.lastInsertRowid) as Omit<AdminUser, 'password_hash' | 'salt'>;
+}
+
+export function deactivateAdminUser(
+  targetUserId: number,
+  requestingUser: { id: number; role: 'superadmin' | 'operator' }
+): { success: boolean; error?: string } {
+  const db = getDb();
+
+  // Regola di sicurezza: solo un superadmin può revocare le utenze
+  if (requestingUser.role !== 'superadmin') {
+    return {
+      success: false,
+      error: 'Operazione non consentita: solo l\'amministratore principale può revocare le utenze.',
+    };
+  }
+
+  // Non ci si può auto-revocare
+  if (requestingUser.id === targetUserId) {
+    return {
+      success: false,
+      error: 'Non puoi revocare la tua stessa utenza amministratore in sessione.',
+    };
+  }
+
+  const target = db.prepare('SELECT * FROM admin_users WHERE id = ?').get(targetUserId) as AdminUser | undefined;
+  if (!target) {
+    return { success: false, error: 'Utenza non trovata.' };
+  }
+
+  // Non è MAI possibile revocare un superadmin
+  if (target.role === 'superadmin') {
+    return {
+      success: false,
+      error: 'Impossibile revocare l\'utenza di un amministratore principale (superadmin).',
+    };
+  }
+
+  db.prepare('UPDATE admin_users SET is_active = 0 WHERE id = ?').run(targetUserId);
+  return { success: true };
+}
+
+export function updateAdminLastLogin(id: number): void {
+  const db = getDb();
+  db.prepare('UPDATE admin_users SET last_login_at = ? WHERE id = ?').run(Date.now(), id);
+}
+

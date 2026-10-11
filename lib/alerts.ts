@@ -8,7 +8,7 @@ import {
 } from '@/lib/db';
 import { haversineMeters } from '@/lib/google-maps';
 import { evaluateOpenStatus, getOpenStatusProvider } from '@/lib/open-status';
-import { sendTelegramMessage } from '@/lib/telegram';
+import { sendTelegramMessage, dispatchNoiseAlertToSubscribers } from '@/lib/telegram';
 import {
   NOISE_ALERT_THRESHOLD_DB,
   NOISE_ALERT_PERSISTENCE_MS,
@@ -89,7 +89,9 @@ export function evaluateNoiseBreach(
     }
 
     const durationMs = timestamp - startedAt;
+    const isStale = Math.abs(Date.now() - timestamp) > (2 * 60 * 1000);
     const shouldAlert =
+      !isStale &&
       durationMs >= persistenceMs &&
       (notifiedAt === null || timestamp - notifiedAt >= cooldownMs);
 
@@ -237,15 +239,25 @@ export async function dispatchNoiseAlert(
   };
 }
 
+export interface SubscriberDispatchSummary {
+  notifiedCount: number;
+  subscribersEvaluated: number;
+  skippedClosed: number;
+}
+
 export interface AlertProcessingResult {
   alerted: boolean;
   evaluation: BreachEvaluation | null;
   dispatch?: AlertDispatchResult;
+  subscribers?: SubscriberDispatchSummary;
 }
 
 /**
  * Punto di ingresso usato dal percorso di telemetria: valuta la violazione e,
  * se necessario, invia l'allerta. Non solleva mai eccezioni verso l'ingest.
+ *
+ * La stessa valutazione (regola dei 10 minuti) governa entrambi i canali:
+ * gli esercenti registrati (company) e gli iscritti self-service del bot.
  */
 export async function processReadingForAlerts(
   stationId: string,
@@ -257,8 +269,41 @@ export async function processReadingForAlerts(
     if (!evaluation.shouldAlert) {
       return { alerted: false, evaluation };
     }
-    const dispatch = await dispatchNoiseAlert(stationId, evaluation);
-    return { alerted: true, evaluation, dispatch };
+
+    const station = getStationById(stationId);
+
+    const [dispatch, subscriberResult] = await Promise.all([
+      dispatchNoiseAlert(stationId, evaluation),
+      station
+        ? dispatchNoiseAlertToSubscribers({
+            station: {
+              id: station.id,
+              name: station.name,
+              latitude: station.latitude,
+              longitude: station.longitude,
+            },
+            soundIntensity: intensity,
+            breach: {
+              startedAt: evaluation.startedAt ?? timestamp,
+              durationMs: evaluation.durationMs,
+              thresholdDb: evaluation.thresholdDb,
+            },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    return {
+      alerted: true,
+      evaluation,
+      dispatch,
+      subscribers: subscriberResult
+        ? {
+            notifiedCount: subscriberResult.notifiedCount,
+            subscribersEvaluated: subscriberResult.subscribersEvaluated,
+            skippedClosed: subscriberResult.skippedClosed,
+          }
+        : undefined,
+    };
   } catch (error: any) {
     console.error('[alerts] Errore durante la valutazione dell\'allerta:', error?.message || error);
     return { alerted: false, evaluation: null };

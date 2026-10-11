@@ -34,6 +34,7 @@ SoundObserver/
 │   └── edge/              numpy port of SoundObserver/models/src/acoustic_models
 │       ├── features.py    log-mel front-end (parity-checked vs torch)
 │       ├── engine.py      ONNX / TFLite runner + model metadata
+│       ├── classifier.py  standalone AI: waveform -> (dominant class, confidence)
 │       ├── anomaly.py     unsupervised "normal" baseline (rolling stats)
 │       ├── decision.py    hysteresis / smoothing -> LED + event flags
 │       ├── audio.py       WAV replay + USB-mic capture, framing, dBFS

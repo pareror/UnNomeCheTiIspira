@@ -1,0 +1,9 @@
+# Python dependencies for the Linux (Qualcomm QRB2210) side of the app.
+numpy>=1.26
+onnxruntime>=1.18
+
+# Optional: only if you deploy a .tflite model instead of .onnx
+# tflite-runtime>=2.14
+
+# Optional: only if you capture from a USB microphone / sound card
+# sounddevice>=0.4

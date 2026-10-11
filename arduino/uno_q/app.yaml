@@ -1,0 +1,3 @@
+name: Urban Acoustic Sensor
+icon: 🔊
+description: Runs the DS-CNN urban-noise + safety classifier on the UNO Q Linux side (16 kHz log-mel -> ONNX/TFLite) and drives the MCU signalling LED over the Bridge.

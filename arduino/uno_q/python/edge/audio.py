@@ -56,13 +56,14 @@ def _read_wav(path: str) -> tuple[int, np.ndarray]:
 class WavSource:
     """Loop a WAV file, emitting overlapping windows at the configured hop."""
 
+    paces_itself = False  # returns immediately; the caller paces the loop
+
     def __init__(self, cfg: RuntimeConfig) -> None:
         if not cfg.wav_path:
             raise ValueError("source='wav' requires a wav_path")
         sr, data = _read_wav(cfg.wav_path)
-        peak = float(np.abs(data).max()) if data.size else 0.0
-        if peak > 0:
-            data = data / peak
+        # No level normalization here: the runtime (like a live mic) sees raw
+        # levels, so the silence gate and dBFS reflect the file as-is.
         self.data = _resample(data, sr, cfg.sample_rate)
         self.win = cfg.win_samples
         self.hop = cfg.hop_samples
@@ -76,19 +77,47 @@ class WavSource:
         return self.data[start : start + self.win]
 
 
+def _pick_input_rate(sd, cfg: RuntimeConfig) -> int:
+    """Return a sample rate the input device accepts (prefer the model's)."""
+    wanted = cfg.sample_rate
+    try:
+        sd.check_input_settings(device=cfg.device, samplerate=wanted, channels=1, dtype="float32")
+        return wanted
+    except Exception:  # noqa: BLE001 - many ALSA devices refuse 16 kHz directly
+        info = sd.query_devices(cfg.device) if cfg.device is not None else sd.query_devices(kind="input")
+        rate = int(round(float(info["default_samplerate"])))
+        print(f"[edge] input device does not accept {wanted} Hz; opening at {rate} Hz and resampling")
+        return rate
+
+
 class MicSource:
-    """Capture from a sound device; :meth:`read_window` returns the last 1 s."""
+    """Capture from a sound device; :meth:`read_window` returns the last window.
+
+    The stream is opened at a rate the device accepts (falling back to its
+    default and resampling), and each window is returned at the model's sample
+    rate as a fixed-length array.
+    """
+
+    paces_itself = True  # read_window blocks until fresh audio has arrived
 
     def __init__(self, cfg: RuntimeConfig) -> None:
         import sounddevice as sd  # imported lazily so wav-only runs need no PortAudio
 
-        self.win = cfg.win_samples
-        self.hop = cfg.hop_samples
-        self._buf = np.zeros(max(self.win, self.hop) * 4, dtype=np.float32)
+        self.out_samples = cfg.win_samples
+        self.target_rate = cfg.sample_rate
+        win_seconds = cfg.win_samples / cfg.sample_rate
+        hop_seconds = cfg.hop_samples / cfg.sample_rate
+        self.capture_rate = _pick_input_rate(sd, cfg)
+        self.cap_win = max(1, int(round(win_seconds * self.capture_rate)))
+        self.cap_hop = max(1, int(round(hop_seconds * self.capture_rate)))
+        self._buf = np.zeros(self.cap_win * 4, dtype=np.float32)
         self._filled = 0
         self._lock = threading.Lock()
+        self._status: str | None = None
 
-        def callback(indata, frames, _time, _status):  # noqa: ANN001
+        def callback(indata, frames, _time, status):  # noqa: ANN001
+            if status:
+                self._status = str(status)
             mono = indata[:, 0] if indata.ndim > 1 else indata
             with self._lock:
                 n = len(mono)
@@ -101,10 +130,10 @@ class MicSource:
                     self._filled = min(self._filled + n, len(self._buf))
 
         self.stream = sd.InputStream(
-            samplerate=cfg.sample_rate,
+            samplerate=self.capture_rate,
             channels=1,
             dtype="float32",
-            blocksize=max(self.hop, 256),
+            blocksize=0,
             device=cfg.device,
             callback=callback,
         )
@@ -114,11 +143,23 @@ class MicSource:
         # Wait until at least one hop of fresh audio has arrived.
         while True:
             with self._lock:
-                if self._filled >= self.win:
-                    window = self._buf[-self.win :].copy()
-                    self._filled = self.win - self.hop
-                    return window
+                if self._filled >= self.cap_win:
+                    chunk = self._buf[-self.cap_win :].copy()
+                    self._filled = max(0, self.cap_win - self.cap_hop)
+                    break
             threading.Event().wait(0.02)
+
+        if self._status:  # overflow/underflow reported by PortAudio
+            print(f"[edge] audio input warning: {self._status}")
+            self._status = None
+
+        if self.capture_rate != self.target_rate:
+            chunk = _resample(chunk, self.capture_rate, self.target_rate)
+        if chunk.size != self.out_samples:
+            chunk = chunk[: self.out_samples] if chunk.size > self.out_samples else np.pad(
+                chunk, (0, self.out_samples - chunk.size)
+            )
+        return chunk
 
     def close(self) -> None:
         self.stream.stop()
@@ -137,3 +178,42 @@ def rms_dbfs(window: np.ndarray) -> float:
     """Amplitude in dBFS (0 = full scale); the node's 1 Hz telemetry value."""
     rms = float(np.sqrt(np.mean(np.square(window)) + 1e-12))
     return float(20.0 * np.log10(max(rms, 1e-6)))
+
+
+class BackgroundGate:
+    """Treat a window as background/idle when it sits near the running noise floor.
+
+    Real microphones in a quiet room deliver low-level noise the classifier was
+    never trained on (it has no "background" class), and it forces it onto some
+    label. Accepting a window only when it rises clearly above the ambient floor
+    keeps the node idle until there is an actual sound event.
+
+    The floor is tracked with a leaky-minimum: it drops instantly to quieter
+    windows and rises slowly, so steady background stays below the threshold while
+    a real event (well above the floor) is still classified.
+    """
+
+    def __init__(
+        self,
+        floor_dbfs: float = -50.0,
+        margin_db: float = 8.0,
+        rise_db_per_hop: float = 0.2,
+    ) -> None:
+        self.floor_dbfs = floor_dbfs
+        self.margin_db = margin_db
+        self.rise = rise_db_per_hop
+        self.floor: float | None = None
+
+    def update(self, dbfs: float) -> bool:
+        """Return ``True`` if the window should be treated as background/idle."""
+        if dbfs < self.floor_dbfs:
+            return True
+        if self.floor is None:
+            self.floor = dbfs
+        elif dbfs < self.floor:
+            self.floor = dbfs
+        else:
+            self.floor += min(dbfs - self.floor, self.rise)
+        if self.margin_db <= 0:
+            return False
+        return dbfs < self.floor + self.margin_db

@@ -39,6 +39,11 @@ class RuntimeConfig:
     hop_seconds: float = 1.0
     calibration_windows: int = 20  # windows skipped into the normal baseline at start-up
     telemetry_every_n: int = 1  # emit one NoiseSample every N windows
+    highpass_hz: float = 100.0  # DC/rumble low-cut applied before log-mel (0 disables)
+    peak_normalize: bool = False  # optional per-window peak norm (off: rely on feature mean/std)
+    silence_dbfs: float = -50.0  # below this level: report "silence" and never alert
+    background_margin_db: float = 8.0  # mic: treat windows within this of the noise floor as idle (0 disables)
+    min_confidence: float = 0.6  # below this the class is reported as "uncertain"
     use_bridge: bool = True
     decision: DecisionConfig = field(default_factory=DecisionConfig)
 
@@ -79,6 +84,14 @@ def load_config(**overrides) -> RuntimeConfig:
         cfg.wav_path = os.environ["EDGE_WAV"]
     if os.environ.get("EDGE_USE_BRIDGE"):
         cfg.use_bridge = os.environ["EDGE_USE_BRIDGE"].strip().lower() not in ("0", "false", "no")
+    if os.environ.get("EDGE_HIGHPASS"):
+        cfg.highpass_hz = float(os.environ["EDGE_HIGHPASS"])
+    if os.environ.get("EDGE_SILENCE_DBFS"):
+        cfg.silence_dbfs = float(os.environ["EDGE_SILENCE_DBFS"])
+    if os.environ.get("EDGE_MIN_CONFIDENCE"):
+        cfg.min_confidence = float(os.environ["EDGE_MIN_CONFIDENCE"])
+    if os.environ.get("EDGE_BG_MARGIN"):
+        cfg.background_margin_db = float(os.environ["EDGE_BG_MARGIN"])
     for key, value in overrides.items():
         if value is not None and hasattr(cfg, key):
             setattr(cfg, key, value)

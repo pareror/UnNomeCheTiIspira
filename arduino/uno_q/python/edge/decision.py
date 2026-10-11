@@ -33,6 +33,11 @@ class DecisionLogic:
             self._buf.popleft()
         return sum(self._buf) / len(self._buf)
 
+    def reset(self) -> None:
+        """Clear the hysteresis latch and smoother (e.g. on silence)."""
+        self.alarm = False
+        self._buf.clear()
+
     def update(
         self,
         anomaly_score: float,

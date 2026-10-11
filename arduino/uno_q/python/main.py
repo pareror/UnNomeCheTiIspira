@@ -21,11 +21,12 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from edge.anomaly import RollingStats
-from edge.audio import make_source, rms_dbfs
+from edge.audio import BackgroundGate, make_source, rms_dbfs
 from edge.config import RuntimeConfig, load_config
-from edge.decision import LED_RED, DecisionLogic
+from edge.decision import LED_OFF, LED_RED, DecisionLogic
 from edge.engine import ModelRunner
 from edge.features import LogMel
+from edge.preprocess import Preprocessor
 
 try:  # Present only inside App Lab; absent when running on a desktop for tests.
     from arduino.app_utils import App, Bridge
@@ -40,20 +41,28 @@ class Runtime:
         model_path = cfg.resolve_model()
         self.runner = ModelRunner.from_dir(model_path)
         self.meta = self.runner.meta
+        cfg.win_seconds = self.meta.win_seconds  # honor the model's window length (1 s / 5 s)
         self.logmel = LogMel(
             sample_rate=cfg.sample_rate,
             n_mels=self.meta.n_mels,
             target_frames=self.meta.frames,
         )
+        self.preprocess = Preprocessor(cfg.sample_rate, cfg.highpass_hz, cfg.peak_normalize)
         self.baseline = RollingStats(n_features=self.meta.embedding_dim)
         self.decision = DecisionLogic(cfg.decision)
         self.source = make_source(cfg)
+        self.gate = (
+            BackgroundGate(cfg.silence_dbfs, cfg.background_margin_db)
+            if cfg.source == "mic" and cfg.background_margin_db > 0
+            else None
+        )
         self._last_led = None
         self._prev_flags = {"alarm": False, "safety": False}
         print(
             f"[edge] model={model_path.name} classes={self.meta.n_urban} "
             f"frames={self.meta.frames} win={self.meta.win_seconds}s "
-            f"source={cfg.source} bridge={'on' if _bridge_ok(cfg) else 'off'}"
+            f"highpass={cfg.highpass_hz:.0f}Hz source={cfg.source} "
+            f"bridge={'on' if _bridge_ok(cfg) else 'off'}"
         )
 
     # -- helpers ---------------------------------------------------------------
@@ -75,8 +84,21 @@ class Runtime:
     def step(self) -> None:
         t0 = time.time()
         window = self.source.read_window()
-        feat = self.logmel(window)  # (1, 1, n_mels, frames)
+        dbfs = rms_dbfs(window)
+        idle = self.gate.update(dbfs) if self.gate is not None else dbfs < self.cfg.silence_dbfs
+
+        if idle:
+            # Quiet/background: report "silence", drop any latched state, never alert.
+            self.decision.reset()
+            self._set_led(LED_OFF)
+            self._prev_flags = {"alarm": False, "safety": False}
+            self._telemetry_silence(window)
+            time.sleep(max(0.0, self.cfg.hop_seconds - (time.time() - t0)))
+            return
+
+        feat = self.logmel(self.preprocess(window))  # (1, 1, n_mels, frames)
         result = self.runner.infer(feat)
+        uncertain = result.urban_confidence < self.cfg.min_confidence
 
         if self.baseline.count_ < self.cfg.calibration_windows:
             self.baseline.update(result.embedding)  # learn "normal" at install
@@ -98,22 +120,36 @@ class Runtime:
                     self._event("EdgeEvent.noise_anomaly", {"novelty": round(novelty, 4)})
         self._prev_flags = {"alarm": state["alarm"], "safety": state["safety"]}
 
-        self._telemetry(window, result, novelty, state)
+        self._telemetry(window, result, novelty, state, uncertain)
 
         elapsed = time.time() - t0
         time.sleep(max(0.0, self.cfg.hop_seconds - elapsed))
 
-    def _telemetry(self, window, result, novelty, state) -> None:  # noqa: ANN001
+    def _telemetry(self, window, result, novelty, state, uncertain: bool) -> None:  # noqa: ANN001
         line = {
             "type": "NoiseSample",
             "ts": round(time.time(), 3),
             "amplitude_dbfs": round(rms_dbfs(window), 2),
-            "class": self.meta.class_names[result.urban_index],
+            "class": "uncertain" if uncertain else self.meta.class_names[result.urban_index],
             "confidence": round(result.urban_confidence, 3),
             "safety_prob": round(result.safety_prob, 3),
             "novelty": round(novelty, 3),
             "led": state["led"],
             "alarm": state["alarm"],
+        }
+        print("[telemetry] " + json.dumps(line))
+
+    def _telemetry_silence(self, window) -> None:  # noqa: ANN001
+        line = {
+            "type": "NoiseSample",
+            "ts": round(time.time(), 3),
+            "amplitude_dbfs": round(rms_dbfs(window), 2),
+            "class": "silence",
+            "confidence": 0.0,
+            "safety_prob": 0.0,
+            "novelty": 0.0,
+            "led": LED_OFF,
+            "alarm": False,
         }
         print("[telemetry] " + json.dumps(line))
 

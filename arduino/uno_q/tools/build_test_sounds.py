@@ -39,6 +39,7 @@ sys.path.insert(0, str(APP_ROOT / "python"))
 from edge.config import SAFETY_CLASSES  # noqa: E402
 from edge.engine import ModelRunner  # noqa: E402
 from edge.features import LogMel  # noqa: E402
+from edge.preprocess import Preprocessor  # noqa: E402
 
 SAMPLE_RATE = 16000
 
@@ -61,13 +62,13 @@ def load_waveform(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
 
 
 def clip_probs(
-    runner: ModelRunner, logmel: LogMel, wave: np.ndarray, win: int, hop: int
+    runner: ModelRunner, logmel: LogMel, preprocess: Preprocessor, wave: np.ndarray, win: int, hop: int
 ) -> tuple[np.ndarray, float]:
     """Mean urban softmax and mean safety probability over a clip's 1 s windows."""
     if wave.shape[0] < win:
         wave = np.pad(wave, (0, win - wave.shape[0]))
     starts = range(0, wave.shape[0] - win + 1, hop)
-    inferences = [runner.infer(logmel(wave[s : s + win])) for s in starts]
+    inferences = [runner.infer(logmel(preprocess(wave[s : s + win]))) for s in starts]
     urban = np.mean(np.stack([inf.urban_probs for inf in inferences]), axis=0)
     safety = float(np.mean([inf.safety_prob for inf in inferences]))
     return urban, safety
@@ -113,10 +114,15 @@ def main() -> None:
     parser.add_argument("--test-fold", type=int, default=10, help="held-out fold preferred for the demo")
     parser.add_argument("--win-seconds", type=float, default=1.0)
     parser.add_argument("--hop-seconds", type=float, default=1.0)
+    parser.add_argument("--highpass", type=float, default=100.0, help="low-cut Hz (match the runtime)")
+    parser.add_argument("--peak-norm", action="store_true", help="also peak-normalize each window (live-mic conditioning)")
     args = parser.parse_args()
 
     runner = ModelRunner.from_dir(Path(args.model_dir) / "model.onnx")
     logmel = LogMel(n_mels=runner.meta.n_mels, target_frames=runner.meta.frames)
+    # Clips are already peak-normalized by load_waveform, so per-window normalization
+    # is only enabled when deliberately mirroring the live-mic front-end.
+    preprocess = Preprocessor(SAMPLE_RATE, args.highpass, peak_normalize=args.peak_norm)
     win, hop = int(args.win_seconds * SAMPLE_RATE), int(args.hop_seconds * SAMPLE_RATE)
 
     by_class = read_metadata(Path(args.metadata), Path(args.data_root))
@@ -143,7 +149,7 @@ def main() -> None:
             except Exception as exc:  # noqa: BLE001
                 print(f"  skip {path.name}: {exc}")
                 continue
-            probs, safety = clip_probs(runner, logmel, wave, win, hop)
+            probs, safety = clip_probs(runner, logmel, preprocess, wave, win, hop)
             idx = int(np.argmax(probs))
             results.append(
                 Result(

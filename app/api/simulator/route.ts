@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllStations, insertNoiseReading } from '@/lib/db';
+import { getAllStations, insertNoiseReading, seedInitialStations, getDb } from '@/lib/db';
 import { processReadingForAlerts } from '@/lib/alerts';
 import { applySecurityHeaders } from '@/lib/security';
 
@@ -30,7 +30,23 @@ function generateSimulatedIntensity(stationId: string): number {
 // POST: simula un ciclo di acquisizione da parte di tutti i sensori Arduino slave
 export async function POST() {
   try {
-    const stations = getAllStations();
+    // Assicurati che le stazioni dummy/fittizie siano registrate
+    const dummyCheck = getDb().prepare("SELECT count(*) as count FROM stations WHERE is_dummy = 1 OR id LIKE 'ard-to-%'").get() as { count: number };
+    if (dummyCheck.count === 0) {
+      seedInitialStations();
+    }
+
+    // Seleziona ESCLUSIVAMENTE le stazioni fittizie/dummy (is_dummy = 1).
+    // Esclude CATEGORICAMENTE le stazioni hardware reali (Arduino fisico 'ard-uno-q-real', microfono PC 'ard-uno-q-real-mic' e qualsiasi stazione con is_dummy = 0).
+    const stations = getAllStations('dummy_only').filter((s) => {
+      if (s.is_dummy !== 1) return false;
+      const lower = s.id.toLowerCase();
+      if (lower === 'ard-uno-q-real' || lower === 'ard-uno-q-real-mic' || lower.includes('real')) {
+        return false;
+      }
+      return true;
+    });
+
     const now = Date.now();
     const newReadings = [];
 
@@ -51,7 +67,7 @@ export async function POST() {
     return applySecurityHeaders(
       NextResponse.json({
         success: true,
-        message: `Simulazione completata con successo per ${stations.length} stazioni slave`,
+        message: `Simulazione completata con successo per ${stations.length} stazioni dummy/fittizie (stazioni reali hardware e microfono PC escluse)`,
         alerts_triggered: alertsTriggered,
         readings_generated: newReadings,
       })

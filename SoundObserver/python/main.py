@@ -113,72 +113,71 @@ class Runtime:
     # -- one hop ---------------------------------------------------------------
     def step(self) -> None:
         t0 = time.time()
-        window = self.source.read_window()
-        dbfs = rms_dbfs(window)
-        idle = self.gate.update(dbfs) if self.gate is not None else dbfs < self.cfg.silence_dbfs
+        res = http_session.post(SERVER_URL, json=payload, timeout=1.0)
+        lat_ms = (time.time() - t0) * 1000
+        if res.status_code in (200, 201):
+            db = payload['sound_intensity']
+            print(f"[{time.strftime('%H:%M:%S')}] \033[32m[OK 201]\033[0m Trasmessi {db:>3} dB al Server Master ({lat_ms:.1f}ms) | Coda RAM: {len(ram_telemetry_queue)}")
+            return True
+        else:
+            print(f"[!] Warning HTTP {res.status_code}: {res.text[:80]}")
+            return False
+    except Exception as e:
+        print(f"[!] Connessione Wi-Fi assente ({e.__class__.__name__}). Pacchetto salvato nella RAM dell'Arduino...")
+        return False
 
-        if idle:
-            # Quiet/background: report "silence", drop any latched state, never alert.
-            self.decision.reset()
-            self._set_led(LED_OFF)
-            self._prev_flags = {"alarm": False, "safety": False}
-            self._telemetry_silence(window)
-            time.sleep(max(0.0, self.cfg.hop_seconds - (time.time() - t0)))
-            return
 
-        feat = self.logmel(self.preprocess(window))  # (1, 1, n_mels, frames)
-        result = self.runner.infer(feat)
-        uncertain = result.urban_confidence < self.cfg.min_confidence
+def transmission_worker():
+    """Thread di trasmissione asincrono: invia i dati dalla RAM al Master."""
+    global running
+    while running:
+        payload_to_send = None
+        with queue_lock:
+            if ram_telemetry_queue:
+                payload_to_send = ram_telemetry_queue.popleft()
 
-        if self.baseline.count_ < self.cfg.calibration_windows:
-            self.baseline.update(result.embedding)  # learn "normal" at install
-        novelty = self.baseline.novelty(result.embedding)
+        if payload_to_send:
+            ok = transmit_packet(payload_to_send)
+            if not ok:
+                with queue_lock:
+                    ram_telemetry_queue.appendleft(payload_to_send)
+                time.sleep(2.0)
+        else:
+            time.sleep(0.05)
 
-        state = self.decision.update(
-            anomaly_score=novelty,
-            safety_prob=result.safety_prob,
-            urban_confidence=result.urban_confidence,
-        )
-        self._set_led(state["led"])
 
-        for flag in ("safety", "alarm"):
-            if state[flag] and not self._prev_flags[flag]:
-                if flag == "safety":
-                    self._raise_safety(result)
-                else:
-                    self._event("EdgeEvent.noise_anomaly", {"novelty": round(novelty, 4)})
-        self._prev_flags = {"alarm": state["alarm"], "safety": state["safety"]}
+# =============================================================================
+# 5. LOOP PRINCIPALE DI ACQUISIZIONE ED INVIO
+# =============================================================================
+def loop():
 
-        self._telemetry(window, result, novelty, state, uncertain)
+    #global state
+    """Funzione di loop chiamata continuamente dall'Arduino App Framework o dal main."""
+    try:
+        # 1. Registra audio hardware dal microfono (arecord dura RECORD_DURATION_SEC)
+        proc = subprocess.run(ARECORD_CMD, capture_output=True)
+        if proc.returncode != 0:
+            err_msg = proc.stderr.decode(errors='ignore').strip()
+            print(f"[!] Errore arecord ({ARECORD_DEVICE}): {err_msg[:60]}")
+            # Fallback temporaneo se il dispositivo hw:0,2 non risponde
+            rms_db, peak_db = -45.0, -25.0
+        else:
+            rms_db, peak_db = get_wav_db(AUDIONAME)
 
-        elapsed = time.time() - t0
-        time.sleep(max(0.0, self.cfg.hop_seconds - elapsed))
+        # 2. Conversione in decibel SPL calibrati
+        livello = dbfs_to_scala(rms_db)
+        picco = dbfs_to_scala(peak_db)
+        db_int = int(round(livello))
 
-    def _telemetry(self, window, result, novelty, state, uncertain: bool) -> None:  # noqa: ANN001
-        line = {
-            "type": "NoiseSample",
-            "ts": round(time.time(), 3),
-            "amplitude_dbfs": round(rms_dbfs(window), 2),
-            "class": "uncertain" if uncertain else self.meta.class_names[result.urban_index],
-            "confidence": round(result.urban_confidence, 3),
-            "safety_prob": round(result.safety_prob, 3),
-            "novelty": round(novelty, 3),
-            "led": state["led"],
-            "alarm": state["alarm"],
-        }
-        print("[telemetry] " + json.dumps(line))
+        # Stampa su console Arduino
+        print(f"[{time.strftime('%H:%M:%S')}] Rilevati: {db_int:>3} dB ({classifica(livello)}) | picco {picco:.1f} dB [RMS {rms_db:.1f} dBFS]")
 
-    def _telemetry_silence(self, window) -> None:  # noqa: ANN001
-        line = {
-            "type": "NoiseSample",
-            "ts": round(time.time(), 3),
-            "amplitude_dbfs": round(rms_dbfs(window), 2),
-            "class": "silence",
-            "confidence": 0.0,
-            "safety_prob": 0.0,
-            "novelty": 0.0,
-            "led": LED_OFF,
-            "alarm": False,
+        # 3. Costruzione payload per il Server Master (solo dati essenziali)
+        payload = {
+            "station_id": STATION_ID,
+            "sound_intensity": db_int,
+            "timestamp": int(time.time() * 1000),
+            "api_key": API_KEY,
         }
         print("[telemetry] " + json.dumps(line))
 

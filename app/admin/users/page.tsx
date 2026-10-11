@@ -7,6 +7,7 @@ import {
   ShieldAlert,
   Users,
   KeyRound,
+  Radio,
   UserPlus,
   Trash2,
   Lock,
@@ -167,8 +168,7 @@ export default function AdminUsersManagementPage() {
     <div
       style={{
         minHeight: '100vh',
-        width: '100vw',
-        overflowY: 'auto',
+        width: '100%',
         backgroundColor: '#0b1329',
         color: '#f8fafc',
         fontFamily: 'system-ui, -apple-system, sans-serif',
@@ -237,10 +237,11 @@ export default function AdminUsersManagementPage() {
               padding: '4px',
               borderRadius: '8px',
               border: '1px solid #334155',
+              gap: '4px',
             }}
           >
             <a
-              href="/admin"
+              href="/admin?tab=keys"
               id="back-to-bot-keys-link"
               style={{
                 color: '#94a3b8',
@@ -252,9 +253,28 @@ export default function AdminUsersManagementPage() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
+                transition: 'color 0.2s',
               }}
             >
               <KeyRound size={15} /> Chiavi Bot
+            </a>
+            <a
+              href="/admin?tab=stations"
+              id="nav-to-stations-link"
+              style={{
+                color: '#94a3b8',
+                padding: '6px 14px',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: 500,
+                textDecoration: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'color 0.2s',
+              }}
+            >
+              <Radio size={15} /> Stazioni Acustiche
             </a>
             <a
               href="/admin/users"
@@ -346,7 +366,7 @@ export default function AdminUsersManagementPage() {
       </header>
 
       {/* Main Content */}
-      <main style={{ maxWidth: '1280px', margin: '0 auto', padding: '28px 24px' }}>
+      <main style={{ maxWidth: '1280px', margin: '0 auto', padding: '28px 24px 80px 24px' }}>
         {/* Caso OPERATORE: Accesso Negato con spiegazione trasparente */}
         {currentUser?.role !== 'superadmin' ? (
           <div
@@ -385,7 +405,7 @@ export default function AdminUsersManagementPage() {
             </p>
             <div style={{ display: 'flex', justifyContent: 'center', gap: '12px' }}>
               <a
-                href="/admin"
+                href="/admin?tab=keys"
                 style={{
                   backgroundColor: '#0284c7',
                   color: '#ffffff',
@@ -400,6 +420,23 @@ export default function AdminUsersManagementPage() {
                 }}
               >
                 <KeyRound size={16} /> Torna a Gestione Chiavi Bot
+              </a>
+              <a
+                href="/admin?tab=stations"
+                style={{
+                  backgroundColor: '#334155',
+                  color: '#ffffff',
+                  padding: '10px 20px',
+                  borderRadius: '8px',
+                  textDecoration: 'none',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                }}
+              >
+                <Radio size={16} /> Stazioni Acustiche
               </a>
             </div>
           </div>

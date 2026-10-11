@@ -8,18 +8,19 @@ const API_URL = process.env.API_URL || 'http://localhost:3000/api/telemetry/read
 const API_KEY = process.env.SENSOR_API_KEY || 'arduino-torino-noise-secret-2026';
 
 const STATIONS = [
-  { id: 'ard-to-01', name: 'San Salvario', min: 65, max: 90 },
-  { id: 'ard-to-02', name: 'Vanchiglia / S. Giulia', min: 58, max: 80 },
-  { id: 'ard-to-03', name: 'Piazza Castello', min: 45, max: 68 },
-  { id: 'ard-to-04', name: 'Murazzi del Po', min: 72, max: 98 },
-  { id: 'ard-to-05', name: 'Porta Nuova', min: 60, max: 82 },
-  { id: 'ard-to-06', name: 'Quadrilatero', min: 50, max: 74 },
-  { id: 'ard-to-07', name: 'Parco del Valentino', min: 28, max: 42 },
-  { id: 'ard-to-08', name: 'Piazza Statuto', min: 68, max: 92 },
+  { id: 'ard-to-01', name: 'San Salvario (Via Baretti / Movida)', min: 65, max: 90, lat: 45.0566, lon: 7.6812 },
+  { id: 'ard-to-02', name: 'Piazza Santa Giulia (Vanchiglia)', min: 58, max: 80, lat: 45.0673, lon: 7.6961 },
+  { id: 'ard-to-03', name: 'Piazza Castello (Centro Storico)', min: 45, max: 68, lat: 45.0709, lon: 7.6861 },
+  { id: 'ard-to-04', name: 'Murazzi del Po (Lungo Fiume)', min: 72, max: 98, lat: 45.0628, lon: 7.6934 },
+  { id: 'ard-to-05', name: 'Porta Nuova (Piazza Carlo Felice)', min: 60, max: 82, lat: 45.0621, lon: 7.6789 },
+  { id: 'ard-to-06', name: 'Quadrilatero Romano (Via Bellezia)', min: 50, max: 74, lat: 45.0747, lon: 7.6804 },
+  { id: 'ard-to-07', name: 'Parco del Valentino (Area Verde Quieta)', min: 28, max: 42, lat: 45.0531, lon: 7.6854 },
+  { id: 'ard-to-08', name: 'Corso Francia / Piazza Statuto (Traffico)', min: 68, max: 92, lat: 45.0768, lon: 7.6681 },
 ];
 
 console.log('========================================================');
-console.log(' AVVIO SIMULATORE ARDUINO SLAVE (Frequenza ~1 secondo)');
+console.log(' AVVIO SIMULATORE ARDUINO SLAVE (Solo stazioni dummy/fittizie)');
+console.log(' NOTA: Le stazioni reali (Arduino fisico e microfono PC) sono ESCLUSE.');
 console.log(` Target Server Master: ${API_URL}`);
 console.log(` Stazioni attive in simulazione: ${STATIONS.length}`);
 console.log('========================================================');

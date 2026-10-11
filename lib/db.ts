@@ -205,9 +205,21 @@ function initializeDatabase(db: Database.Database) {
     // La colonna esiste già
   }
 
-  // Seleziona se ci sono stazioni registrate
-  const count = db.prepare('SELECT count(*) as count FROM stations').get() as { count: number };
-  if (count.count === 0) {
+  // Rimozione retrocompatibile di latitudine e longitudine dalla tabella delle letture (noise_readings) se presenti
+  try {
+    db.exec(`ALTER TABLE noise_readings DROP COLUMN latitude;`);
+  } catch {
+    // Non presente
+  }
+  try {
+    db.exec(`ALTER TABLE noise_readings DROP COLUMN longitude;`);
+  } catch {
+    // Non presente
+  }
+
+  // Seleziona se ci sono stazioni dummy registrate; se mancano, inizializzale
+  const dummyCount = db.prepare("SELECT count(*) as count FROM stations WHERE is_dummy = 1 OR id LIKE 'ard-to-%'").get() as { count: number };
+  if (dummyCount.count === 0) {
     seedInitialStations(db);
   } else {
     // Marca le stazioni generate come dummy per consentire l'oscuramento
@@ -495,29 +507,95 @@ export function getStationById(stationId: string): Station | undefined {
   return db.prepare('SELECT * FROM stations WHERE id = ?').get(stationId) as Station | undefined;
 }
 
-// Assicura l'esistenza di una stazione: la registra se assente senza sovrascrivere
-// una stazione già nota. Usata dagli eventi di pericolo, che possono arrivare dal
-// device prima che sia stata inviata qualsiasi lettura dB.
-export function upsertStation(input: {
+export interface StationAdminItem extends Station {
+  readings_count: number;
+  current_intensity: number | null;
+  last_reading_time: number | null;
+}
+
+export function listStationsAdmin(): StationAdminItem[] {
+  const db = getDb();
+  const query = `
+    SELECT 
+      s.id,
+      s.name,
+      s.latitude,
+      s.longitude,
+      s.is_dummy,
+      s.created_at,
+      COUNT(r.id) as readings_count,
+      MAX(r.timestamp) as last_reading_time,
+      (
+        SELECT sound_intensity 
+        FROM noise_readings 
+        WHERE station_id = s.id 
+        ORDER BY timestamp DESC, id DESC 
+        LIMIT 1
+      ) as current_intensity
+    FROM stations s
+    LEFT JOIN noise_readings r ON s.id = r.station_id
+    GROUP BY s.id
+    ORDER BY s.is_dummy ASC, s.name ASC
+  `;
+  return db.prepare(query).all() as StationAdminItem[];
+}
+
+export function createStation(input: {
   id: string;
-  name?: string;
-  latitude?: number;
-  longitude?: number;
+  name: string;
+  latitude: number;
+  longitude: number;
   is_dummy?: boolean;
 }): Station {
   const db = getDb();
+  const cleanId = input.id.trim();
+  const isDummyVal = input.is_dummy ? 1 : 0;
+
   db.prepare(`
-    INSERT INTO stations (id, name, latitude, longitude, is_dummy)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(id) DO NOTHING
-  `).run(
-    input.id,
-    input.name || `Stazione Arduino (${input.id})`,
-    input.latitude ?? 45.0705,
-    input.longitude ?? 7.6868,
-    input.is_dummy ? 1 : 0
-  );
-  return getStationById(input.id)!;
+    INSERT INTO stations (id, name, latitude, longitude, is_dummy, created_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+  `).run(cleanId, input.name.trim(), input.latitude, input.longitude, isDummyVal);
+
+  return db.prepare('SELECT * FROM stations WHERE id = ?').get(cleanId) as Station;
+}
+
+export function updateStation(
+  id: string,
+  updates: {
+    name?: string;
+    latitude?: number;
+    longitude?: number;
+    is_dummy?: boolean;
+  }
+): Station | null {
+  const db = getDb();
+  const existing = db.prepare('SELECT * FROM stations WHERE id = ?').get(id) as Station | undefined;
+  if (!existing) return null;
+
+  const newName = updates.name !== undefined ? updates.name.trim() : existing.name;
+  const newLat = updates.latitude !== undefined ? updates.latitude : existing.latitude;
+  const newLng = updates.longitude !== undefined ? updates.longitude : existing.longitude;
+  const newDummy = updates.is_dummy !== undefined ? (updates.is_dummy ? 1 : 0) : existing.is_dummy;
+
+  db.prepare(`
+    UPDATE stations
+    SET name = ?, latitude = ?, longitude = ?, is_dummy = ?
+    WHERE id = ?
+  `).run(newName, newLat, newLng, newDummy, id);
+
+  return db.prepare('SELECT * FROM stations WHERE id = ?').get(id) as Station;
+}
+
+export function deleteStation(id: string): boolean {
+  const db = getDb();
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM noise_readings WHERE station_id = ?').run(id);
+    db.prepare('DELETE FROM noise_breaches WHERE station_id = ?').run(id);
+    db.prepare('DELETE FROM noise_alerts WHERE station_id = ?').run(id);
+    const result = db.prepare('DELETE FROM stations WHERE id = ?').run(id);
+    return result.changes > 0;
+  });
+  return tx();
 }
 
 // ==========================================

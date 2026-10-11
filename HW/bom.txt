@@ -1,0 +1,17 @@
+esp: https://www.alibaba.com/product-detail/Espressif-ESP32-WROOM-32E-8M-64Mbit_1601233405746.html?spm=a2700.a2700aimodessrpage.supplier.6.3279759eGpLnHl
+mic: https://www.digikey.com/en/products/detail/tdk-invensense/MMICT5848-00-012/24474953
+ps: https://www.hlktech.net/index.php?id=105
+pcb
+enclosure: https://www.tradeindia.com/products/abs-plastic-waterproof-electrical-enclosure-box-ip65-5679227.html
+
+
+estimated unit price (with estimated shipping avg 300 euro per 1000pcs) : 
+
+esp: 2 + 0.3 = 2.3
+enclosure: 1.55 + 0.3 = 1.85
+mic: 1.4 + 0.3 = 1.7
+pcb: 0.3 + 0.3 = 0.6
+pcb assembly: 0.65 (shipment with pcb so not considered)  
+ps: 2 + 0.3 = 2.3
+
+unit price tot(with shipment) = 9.4 euro --> max 10 euro

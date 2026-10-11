@@ -1,9 +1,15 @@
 # Python dependencies for the Linux (Qualcomm QRB2210) side of the app.
+#
+# pyproject.toml is the source of truth (uv project); this file mirrors the
+# core + optional dependencies for App Lab, which manages its own environment.
 numpy>=1.26
 onnxruntime>=1.18
 
 # Optional: only if you deploy a .tflite model instead of .onnx
-# tflite-runtime>=2.14
+# ai-edge-litert>=1.0
 
 # Optional: only if you capture from a USB microphone / sound card
 # sounddevice>=0.4
+
+# Optional: better resampling for non-16 kHz WAVs
+# scipy>=1.11

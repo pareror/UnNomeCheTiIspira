@@ -2,7 +2,7 @@
 
 TinyML models for the urban acoustic sensor network, plus the code to train and
 export them. Everything here targets a **sub-7-EUR MCU** (ESP32-S3/C3 or
-nRF52840); see [`../docs/audio-classification-model.md`](../docs/audio-classification-model.md)
+nRF52840); see [`../../docs/audio-classification-model.md`](../../docs/audio-classification-model.md)
 for the specification.
 
 ## What's inside

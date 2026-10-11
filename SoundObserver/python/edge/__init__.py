@@ -1,7 +1,7 @@
 """On-device runtime for the urban acoustic sensor (Arduino UNO Q, Linux side).
 
 This package is a NumPy/ONNX-runtime port of the reference pipeline in
-``models/src/acoustic_models`` so it runs on the Qualcomm QRB2210 without torch:
+``SoundObserver/models/src/acoustic_models`` so it runs on the Qualcomm QRB2210 without torch:
 
 - :mod:`edge.features`  -- log-mel front-end (matches ``acoustic_models.features.LogMel``)
 - :mod:`edge.engine`    -- ONNX / TFLite DS-CNN runner + model metadata

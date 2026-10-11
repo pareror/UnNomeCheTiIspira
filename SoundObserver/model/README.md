@@ -15,16 +15,16 @@ Expected contents after running the preparation tool:
 contain — the runtime applies `(logmel - norm_mean) / (norm_std + 1e-5)` before
 inference.
 
-Generate it from `models/`:
+Generate it from `SoundObserver/models/`:
 
 ```bash
-python arduino/uno_q/tools/prepare_model.py \
-  --checkpoint models/artifacts/ds_cnn_urban_safety.pt \
-  --out arduino/uno_q/model \
-  --int8 --calib-cache models/data/urban_safety_features.pt
+python SoundObserver/tools/prepare_model.py \
+  --checkpoint SoundObserver/models/artifacts/ds_cnn_urban_safety.pt \
+  --out SoundObserver/model \
+  --int8 --calib-cache SoundObserver/models/data/urban_safety_features.pt
 ```
 
 `model_int8.onnx` is picked up automatically in preference to `model.onnx`.
 To deploy a `.tflite` instead, convert with `onnx2tf` (see
-`models/src/acoustic_models/export.py`) and drop `model.tflite` here; the
+`SoundObserver/models/src/acoustic_models/export.py`) and drop `model.tflite` here; the
 runtime auto-detects it.

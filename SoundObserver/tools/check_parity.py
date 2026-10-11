@@ -2,7 +2,7 @@
 
 Run in the models environment (needs torch):
 
-    python arduino/uno_q/tools/check_parity.py
+    python SoundObserver/tools/check_parity.py
 
 Exits non-zero if the maximum absolute difference exceeds ``--tol``.
 """
@@ -16,9 +16,9 @@ from pathlib import Path
 import numpy as np
 
 THIS = Path(__file__).resolve()
-REPO_ROOT = THIS.parents[3]
-sys.path.insert(0, str(REPO_ROOT / "models" / "src"))
-sys.path.insert(0, str(REPO_ROOT / "arduino" / "uno_q" / "python"))
+APP_ROOT = THIS.parents[1]
+sys.path.insert(0, str(APP_ROOT / "models" / "src"))
+sys.path.insert(0, str(APP_ROOT / "python"))
 
 import torch  # noqa: E402
 

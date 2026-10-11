@@ -5,18 +5,18 @@ panel every hop with the current classification, safety probability, novelty and
 LED state.
 
     # live from the default input device
-    python arduino/uno_q/python/live_monitor.py --model-dir arduino/uno_q/model
+    python SoundObserver/python/live_monitor.py --model-dir SoundObserver/model
 
     # pick a device / list them
-    python arduino/uno_q/python/live_monitor.py --list-devices
-    python arduino/uno_q/python/live_monitor.py --device 2
+    python SoundObserver/python/live_monitor.py --list-devices
+    python SoundObserver/python/live_monitor.py --device 2
 
     # without a microphone: replay a clip on a loop
-    python arduino/uno_q/python/live_monitor.py --source wav \
-        --wav arduino/uno_q/test_sounds/traffic.wav
+    python SoundObserver/python/live_monitor.py --source wav \
+        --wav SoundObserver/test_sounds/traffic.wav
 
     # line-by-line output (for logs / non-ANSI terminals)
-    python arduino/uno_q/python/live_monitor.py --plain
+    python SoundObserver/python/live_monitor.py --plain
 
 Requires ``sounddevice`` (``pip install sounddevice``) for microphone capture;
 WAV replay needs nothing extra.

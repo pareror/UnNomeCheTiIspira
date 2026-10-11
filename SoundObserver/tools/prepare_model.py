@@ -10,13 +10,13 @@ does *not* include, and writes the deployable bundle consumed by the app:
 
 Run it in the models environment (needs torch + onnx):
 
-    python arduino/uno_q/tools/prepare_model.py \
-        --checkpoint models/artifacts/ds_cnn_urban_safety.pt \
-        --out arduino/uno_q/model
+    python SoundObserver/tools/prepare_model.py \
+        --checkpoint SoundObserver/models/artifacts/ds_cnn_urban_safety.pt \
+        --out SoundObserver/model
 
-Add ``--int8 --calib-cache models/data/urban_safety_features.pt`` to also emit a
+Add ``--int8 --calib-cache SoundObserver/models/data/urban_safety_features.pt`` to also emit a
 full-integer model (matches the TFLite INT8 target in docs/model spec section 7).
-``tools/ml/check_parity.py`` verifies the NumPy front-end against PyTorch.
+``tools/check_parity.py`` verifies the NumPy front-end against PyTorch.
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ from pathlib import Path
 import torch
 
 THIS = Path(__file__).resolve()
-REPO_ROOT = THIS.parents[3]
-MODELS_SRC = REPO_ROOT / "models" / "src"
+APP_ROOT = THIS.parents[1]
+MODELS_SRC = APP_ROOT / "models" / "src"
 sys.path.insert(0, str(MODELS_SRC))
 
 from acoustic_models.export import N_MELS, export_classifier_onnx  # noqa: E402
@@ -110,11 +110,11 @@ def build_calibration(meta: dict, cache: Path | None, limit: int):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True, help="trained .pt checkpoint")
-    parser.add_argument("--out", default="arduino/uno_q/model", help="output model directory")
+    parser.add_argument("--out", default="SoundObserver/model", help="output model directory")
     parser.add_argument("--onnx", default=None, help="reuse an existing .onnx instead of re-exporting")
     parser.add_argument("--name", default="model.onnx", help="output onnx filename")
     parser.add_argument("--int8", action="store_true", help="also write a statically quantized INT8 model")
-    parser.add_argument("--calib-cache", default="models/data/urban_safety_features.pt")
+    parser.add_argument("--calib-cache", default="SoundObserver/models/data/urban_safety_features.pt")
     parser.add_argument("--calib-samples", type=int, default=200)
     args = parser.parse_args()
 

@@ -23,7 +23,7 @@ matching `docs/system-architecture-model.md`.
 ## 1. Layout
 
 ```
-arduino/uno_q/
+SoundObserver/
 ├── app.yaml               App Lab manifest
 ├── pyproject.toml         uv project (dependencies + extras)
 ├── uv.lock                locked dependency set
@@ -31,7 +31,7 @@ arduino/uno_q/
 ├── python/
 │   ├── main.py            App Lab entry point + runtime loop
 │   ├── live_monitor.py    standalone real-time monitor (mic or WAV)
-│   └── edge/              numpy port of models/src/acoustic_models
+│   └── edge/              numpy port of SoundObserver/models/src/acoustic_models
 │       ├── features.py    log-mel front-end (parity-checked vs torch)
 │       ├── engine.py      ONNX / TFLite runner + model metadata
 │       ├── anomaly.py     unsupervised "normal" baseline (rolling stats)
@@ -49,18 +49,18 @@ arduino/uno_q/
 
 ## 2. Prepare the model
 
-The trained checkpoint `models/artifacts/ds_cnn_urban_safety.pt` carries the
+The trained checkpoint `SoundObserver/models/artifacts/ds_cnn_urban_safety.pt` carries the
 class names and log-mel normalization the ONNX graph does not. Export the bundle
-(run from `models/`, in an environment with torch):
+(run from `SoundObserver/models/`, in an environment with torch):
 
 ```bash
-python arduino/uno_q/tools/prepare_model.py \
-  --checkpoint models/artifacts/ds_cnn_urban_safety.pt \
-  --out arduino/uno_q/model \
-  --int8 --calib-cache models/data/urban_safety_features.pt
+python SoundObserver/tools/prepare_model.py \
+  --checkpoint SoundObserver/models/artifacts/ds_cnn_urban_safety.pt \
+  --out SoundObserver/model \
+  --int8 --calib-cache SoundObserver/models/data/urban_safety_features.pt
 ```
 
-This writes `arduino/uno_q/model/model.onnx`, an optional `model_int8.onnx`, and
+This writes `SoundObserver/model/model.onnx`, an optional `model_int8.onnx`, and
 `model_meta.json`. The runtime prefers `model_int8.onnx`, then `model.onnx`,
 then `model.tflite`.
 
@@ -71,7 +71,7 @@ then `model.tflite`.
 The app is a [uv](https://docs.astral.sh/uv/) project (`pyproject.toml` + `uv.lock`):
 
 ```bash
-cd arduino/uno_q
+cd SoundObserver
 uv sync                 # core runtime: numpy + onnxruntime
 uv sync --all-extras    # + usb microphone, resampler, tflite backend, tooling
 ```
@@ -86,11 +86,11 @@ uv sync --all-extras    # + usb microphone, resampler, tflite backend, tooling
 `requirements.txt` mirrors the core/optional deps for App Lab (which manages its
 own environment); `pyproject.toml` is the source of truth for uv. The
 model-preparation tools (`tools/prepare_model.py`, `tools/check_parity.py`) need
-torch, so run those from the `models/` project.
+torch, so run those from the `SoundObserver/models/` project.
 
 ### App Lab
 
-Open `arduino/uno_q/` as the app folder and press *Run*. App Lab installs the
+Open `SoundObserver/` as the app folder and press *Run*. App Lab installs the
 Python dependencies into the app environment; the sketch is flashed to the STM32
 side automatically.
 
@@ -140,7 +140,7 @@ terminal panel every hop with the current classification, safety probability,
 novelty and LED state:
 
 ```bash
-cd arduino/uno_q
+cd SoundObserver
 
 # live from the default input device
 uv run --extra mic python/live_monitor.py
@@ -224,13 +224,13 @@ LED off and never raises an event, and any latched alarm/safety state is cleared
 
 Thresholds, smoothing window and the calibration length live in
 `python/edge/config.py` (`DecisionConfig`, `RuntimeConfig.calibration_windows`)
-and mirror `models/configs/default.yaml`.
+and mirror `SoundObserver/models/configs/default.yaml`.
 
 ## 5. Verify
 
 ```bash
 # front-end parity with the PyTorch reference (needs torch)
-python arduino/uno_q/tools/check_parity.py
+python SoundObserver/tools/check_parity.py
 ```
 
 ## 6. Demo sounds (pitch)
@@ -239,23 +239,23 @@ python arduino/uno_q/tools/check_parity.py
 correctly through this runtime (held-out clips preferred). Replay any of them:
 
 ```bash
-EDGE_WAV=arduino/uno_q/test_sounds/scream.wav \
-  python arduino/uno_q/python/main.py --source wav \
-  --wav arduino/uno_q/test_sounds/scream.wav --model-dir arduino/uno_q/model
+EDGE_WAV=SoundObserver/test_sounds/scream.wav \
+  python SoundObserver/python/main.py --source wav \
+  --wav SoundObserver/test_sounds/scream.wav --model-dir SoundObserver/model
 ```
 
 Rebuild or refresh the set (evaluates labeled clips, keeps the best correct one
 per class, writes `manifest.json`):
 
 ```bash
-python arduino/uno_q/tools/build_test_sounds.py
+python SoundObserver/tools/build_test_sounds.py
 ```
 
 ## 7. Notes and alternatives
 
 - **Runtime:** ONNX Runtime (CPU) on the Qualcomm side. If you prefer the
   intended MCU path, convert to INT8 TFLite (`onnx2tf`, see
-  `models/src/acoustic_models/export.py`) and run it with
+  `SoundObserver/models/src/acoustic_models/export.py`) and run it with
   `tflite_runtime`/`ai_edge_litert` here, or with **TFLite Micro** on the
   STM32U585 directly.
 - **Novelty baseline:** `RollingStats` on the 64-D embedding (the "free",

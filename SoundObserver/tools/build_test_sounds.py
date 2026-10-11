@@ -13,11 +13,11 @@ file, confidence and whether the clip was held out.
 
 Example:
 
-    python arduino/uno_q/tools/build_test_sounds.py \
-        --metadata models/data/urban_safety/metadata.csv \
-        --data-root models \
-        --model-dir arduino/uno_q/model \
-        --out arduino/uno_q/test_sounds
+    python SoundObserver/tools/build_test_sounds.py \
+        --metadata SoundObserver/models/data/urban_safety/metadata.csv \
+        --data-root SoundObserver/models \
+        --model-dir SoundObserver/model \
+        --out SoundObserver/test_sounds
 """
 
 from __future__ import annotations
@@ -106,10 +106,10 @@ def read_metadata(csv_path: Path, data_root: Path) -> dict[str, list[tuple[Path,
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--metadata", default="models/data/urban_safety/metadata.csv")
-    parser.add_argument("--data-root", default="models")
-    parser.add_argument("--model-dir", default="arduino/uno_q/model")
-    parser.add_argument("--out", default="arduino/uno_q/test_sounds")
+    parser.add_argument("--metadata", default="SoundObserver/models/data/urban_safety/metadata.csv")
+    parser.add_argument("--data-root", default="SoundObserver/models")
+    parser.add_argument("--model-dir", default="SoundObserver/model")
+    parser.add_argument("--out", default="SoundObserver/test_sounds")
     parser.add_argument("--per-class", type=int, default=40, help="candidates evaluated per class")
     parser.add_argument("--test-fold", type=int, default=10, help="held-out fold preferred for the demo")
     parser.add_argument("--win-seconds", type=float, default=1.0)

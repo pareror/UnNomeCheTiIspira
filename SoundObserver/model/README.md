@@ -1,7 +1,8 @@
 # model/
 
 Deployable model bundle consumed by the runtime (see `tools/prepare_model.py`).
-Generated files are git-ignored; only this README is tracked.
+The bundle (`model.onnx` + `model.onnx.data` + `model_meta.json`) is committed so
+it ships with the app folder (Arduino App Lab syncs only tracked files to the board).
 
 Expected contents after running the preparation tool:
 

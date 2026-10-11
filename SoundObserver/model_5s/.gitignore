@@ -1,3 +1,3 @@
-*
-!.gitignore
-!README.md
+# The DS-CNN bundle (model.onnx + model.onnx.data + model_meta.json) is committed
+# on purpose so Arduino App Lab ships it with the app: App Lab syncs only tracked
+# files to the board, so a git-ignored model would never reach /app/model_5s.

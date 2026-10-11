@@ -183,7 +183,7 @@ def transmit_packet(payload: dict) -> bool:
         http_session = init_optimized_http_session()
     try:
         t0 = time.time()
-        res = http_session.post(SERVER_URL, json=payload, timeout=2.0)
+        res = http_session.post(SERVER_URL, json=payload, timeout=1.0)
         lat_ms = (time.time() - t0) * 1000
         if res.status_code in (200, 201):
             db = payload['sound_intensity']

@@ -36,7 +36,17 @@ export async function POST() {
       seedInitialStations();
     }
 
-    const stations = getAllStations('all');
+    // Seleziona ESCLUSIVAMENTE le stazioni fittizie/dummy (is_dummy = 1).
+    // Esclude CATEGORICAMENTE le stazioni hardware reali (Arduino fisico 'ard-uno-q-real', microfono PC 'ard-uno-q-real-mic' e qualsiasi stazione con is_dummy = 0).
+    const stations = getAllStations('dummy_only').filter((s) => {
+      if (s.is_dummy !== 1) return false;
+      const lower = s.id.toLowerCase();
+      if (lower === 'ard-uno-q-real' || lower === 'ard-uno-q-real-mic' || lower.includes('real')) {
+        return false;
+      }
+      return true;
+    });
+
     const now = Date.now();
     const newReadings = [];
 
@@ -57,7 +67,7 @@ export async function POST() {
     return applySecurityHeaders(
       NextResponse.json({
         success: true,
-        message: `Simulazione completata con successo per ${stations.length} stazioni slave`,
+        message: `Simulazione completata con successo per ${stations.length} stazioni dummy/fittizie (stazioni reali hardware e microfono PC escluse)`,
         alerts_triggered: alertsTriggered,
         readings_generated: newReadings,
       })

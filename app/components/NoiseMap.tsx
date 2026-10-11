@@ -27,6 +27,7 @@ export interface StationMapItem {
 interface NoiseMapProps {
   stations: StationMapItem[];
   selectedStationId?: string | null;
+  onSelectStation?: (stationId: string | null) => void;
 }
 
 export type HeatmapMode = 'combined' | 'gradient' | 'circles';
@@ -137,7 +138,7 @@ function updatePopupDOMIfOpen(stationId: string, intensity: number, lastReadingT
   }
 }
 
-export default function NoiseMap({ stations, selectedStationId }: NoiseMapProps) {
+export default function NoiseMap({ stations, selectedStationId, onSelectStation }: NoiseMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const activePopupRef = useRef<maplibregl.Popup | null>(null);
@@ -626,7 +627,16 @@ export default function NoiseMap({ stations, selectedStationId }: NoiseMapProps)
   // 4. Pan / FlyTo alla stazione selezionata
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !isMapLoaded || !selectedStationId) return;
+    if (!map || !isMapLoaded) return;
+
+    if (!selectedStationId) {
+      if (activePopupRef.current) {
+        activePopupRef.current.remove();
+        activePopupRef.current = null;
+        activePopupStationIdRef.current = null;
+      }
+      return;
+    }
 
     const station = stations.find((s) => s.id === selectedStationId);
     if (!station) return;
@@ -659,10 +669,11 @@ export default function NoiseMap({ stations, selectedStationId }: NoiseMapProps)
         activePopupStationIdRef.current = null;
       }
       activePopupRef.current = null;
+      onSelectStation?.(null);
     });
 
     activePopupRef.current = popup;
-  }, [selectedStationId, stations, isMapLoaded]);
+  }, [selectedStationId, stations, isMapLoaded, onSelectStation]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>

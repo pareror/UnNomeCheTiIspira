@@ -140,8 +140,24 @@ export default function AdminDashboardPage() {
     }
   };
 
+  const handleTabChange = (tab: 'keys' | 'stations') => {
+    setActiveTab(tab);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', tab);
+      window.history.replaceState(null, '', url.toString());
+    }
+  };
+
   useEffect(() => {
     loadData();
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get('tab');
+      if (tabParam === 'stations' || tabParam === 'keys') {
+        setActiveTab(tabParam);
+      }
+    }
   }, []);
 
   const handleLogout = async () => {
@@ -559,7 +575,7 @@ export default function AdminDashboardPage() {
             <button
               type="button"
               id="nav-bot-keys-tab"
-              onClick={() => setActiveTab('keys')}
+              onClick={() => handleTabChange('keys')}
               style={{
                 backgroundColor: activeTab === 'keys' ? '#0284c7' : 'transparent',
                 color: activeTab === 'keys' ? '#ffffff' : '#94a3b8',
@@ -580,7 +596,7 @@ export default function AdminDashboardPage() {
             <button
               type="button"
               id="nav-stations-tab"
-              onClick={() => setActiveTab('stations')}
+              onClick={() => handleTabChange('stations')}
               style={{
                 backgroundColor: activeTab === 'stations' ? '#0284c7' : 'transparent',
                 color: activeTab === 'stations' ? '#ffffff' : '#94a3b8',

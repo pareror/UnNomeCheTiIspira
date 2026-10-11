@@ -70,6 +70,29 @@ STATION_NAME = "Arduino Uno Q (Stazione Hardware)"
 LATITUDE = 45.0566
 LONGITUDE = 7.6812
 
+# Endpoint Safety Alert API per notifiche Telegram di emergenza
+if "/api/telemetry/reading" in SERVER_URL:
+    DEFAULT_SAFETY_URL = SERVER_URL.replace("/api/telemetry/reading", "/api/alerts/safety")
+else:
+    DEFAULT_SAFETY_URL = "http://192.168.22.103:3000/api/alerts/safety"
+
+SAFETY_ALERT_URL = os.getenv("SAFETY_ALERT_URL", DEFAULT_SAFETY_URL)
+
+# Classi audio di pericolo del modello DS-CNN che attivano l'avviso di emergenza su Telegram
+# ("scream", "gunshot", "siren", "impact_crash")
+DANGER_CLASSES = set(
+    filter(
+        None,
+        [c.strip().lower() for c in os.getenv("DANGER_CLASSES", "scream,gunshot,siren,impact_crash").split(",")]
+    )
+)
+
+# Soglia minima di confidenza (0.0 - 1.0) per considerare affidabile l'evento critico
+SAFETY_CONFIDENCE_THRESHOLD = float(os.getenv("SAFETY_CONFIDENCE_THRESHOLD", "0.40"))
+
+# Flag per forzare l'invio all'API per qualsiasi classificazione (utile per test o simulazioni)
+SEND_ALL_ALERTS = os.getenv("SEND_ALL_ALERTS", "0") in ("1", "true", "True")
+
 # =============================================================================
 # 2. CONFIGURAZIONE AUDIO HARDWARE (ARECORD)
 # =============================================================================
@@ -224,6 +247,71 @@ def transmission_worker():
             time.sleep(0.05)
 
 
+def send_safety_alert(label: str, confidence: float, sound_db: Optional[float] = None) -> bool:
+    """
+    Invia la classificazione del modello di Machine Learning Edge (DS-CNN)
+    all'endpoint /api/alerts/safety del Server Master Next.js.
+    
+    L'API del server provvede a inoltrare la notifica immediata su Telegram
+    agli utenti registrati entro il proprio raggio e alle forze dell'ordine / autorità.
+    """
+    global http_session
+    if http_session is None:
+        http_session = init_optimized_http_session()
+
+    clean_label = (label or "other").strip().lower()
+    if clean_label in {"scream", "gunshot", "siren", "impact_crash"}:
+        event_type = clean_label
+    else:
+        event_type = "other"
+
+    db_str = f" | Livello sonoro: {sound_db:.1f} dB" if sound_db is not None else ""
+    payload = {
+        "station_id": STATION_ID,
+        "name": STATION_NAME,
+        "latitude": LATITUDE,
+        "longitude": LONGITUDE,
+        "event_type": event_type,
+        "confidence": float(round(confidence, 4)),
+        "timestamp": int(time.time() * 1000),
+        "message": f"Classificazione ML Edge (DS-CNN): {label} ({confidence * 100:.1f}%){db_str}",
+        "api_key": API_KEY,
+    }
+
+    try:
+        t0 = time.time()
+        res = http_session.post(
+            SAFETY_ALERT_URL,
+            json=payload,
+            timeout=2.5,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": API_KEY,
+            }
+        )
+        lat_ms = (time.time() - t0) * 1000
+        if res.status_code in (200, 201):
+            data = {}
+            try:
+                data = res.json()
+            except Exception:
+                pass
+            subs = data.get("subscribers_notified", 0)
+            auths = data.get("authorities_notified", 0)
+            print(
+                f"[{time.strftime('%H:%M:%S')}] \033[31m[SAFETY ALERT INVIATO]\033[0m "
+                f"Evento '{event_type}' ({confidence * 100:.1f}%) notificato su Telegram! "
+                f"(Sottoscrittori: {subs}, Autorità: {auths}, Latenza: {lat_ms:.1f}ms)"
+            )
+            return True
+        else:
+            print(f"[{time.strftime('%H:%M:%S')}] [!] Warning Safety API HTTP {res.status_code}: {res.text[:100]}")
+            return False
+    except Exception as e:
+        print(f"[{time.strftime('%H:%M:%S')}] [!] Errore connessione Safety API ({SAFETY_ALERT_URL}): {e}")
+        return False
+
+
 # =============================================================================
 # 5. LOOP PRINCIPALE DI ACQUISIZIONE ED INVIO
 # =============================================================================
@@ -265,17 +353,32 @@ def loop():
         with queue_lock:
             ram_telemetry_queue.append(payload)
 
-         #4.5 Notifica l'stm32 sullo stato della ricerca
-        label, confidence = classify_file("test_audio.wav")
-        print(f"Classe: {label}, Confidenza: {confidence:.2f}")
-        
-        # 5. Notifica locale all'STM32 via Seriale (se collegato)
-   
-        
-        if (bridge.connect()):  # Waits until connected; True if connected, False on timeout
+        # 4.5 Classificazione audio con modello Edge ML (DS-CNN)
+        label = "ambient_quiet"
+        confidence = 0.0
+        try:
+            label, confidence = classify_file(AUDIONAME)
+            print(f"[{time.strftime('%H:%M:%S')}] \033[36m[ML Edge]\033[0m Classe: '{label}' | Confidenza: {confidence:.2f} ({confidence * 100:.1f}%)")
+
+            # Invio allerta di sicurezza al Server Master / Telegram se evento critico
+            clean_label = (label or "").strip().lower()
+            is_danger = (clean_label in DANGER_CLASSES and confidence >= SAFETY_CONFIDENCE_THRESHOLD) or SEND_ALL_ALERTS
+            if is_danger:
+                print(
+                    f"[{time.strftime('%H:%M:%S')}] \033[31m[!] CRITICITÀ RILEVATA: '{label.upper()}' "
+                    f"({confidence * 100:.1f}%)\033[0m -> Invio ad API Safety per notifica Telegram..."
+                )
+                send_safety_alert(clean_label, confidence, sound_db=livello)
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] [ML Edge] Evento non critico ({label}: {confidence * 100:.1f}%), nessuna notifica Telegram richiesta.")
+        except Exception as e:
+            print(f"[!] Errore durante classificazione ML o invio allerta: {e}")
+
+        # 5. Notifica locale all'STM32 via Seriale / Bridge (se presente)
+        if bridge.connect():  # True se connesso, False su timeout o assenza socket
             #state = not state
-            bridge.notify("get_label",label)
-            bridge.notify("set_led_level",db_int)
+            bridge.notify("get_label", label)
+            bridge.notify("set_led_level", db_int)
             bridge.disconnect()
             print(f"State {livello} has been sent to mcu")
 
@@ -289,10 +392,25 @@ def loop():
 # 6. AVVIO APPLICAZIONE (APP.RUN O STANDALONE)
 # =============================================================================
 if __name__ == '__main__':
+    # Modalità test manuale: permette di inviare un'allerta di prova all'API Safety
+    # senza bisogno di hardware o microfono collegati: python main.py --test-alert gunshot 0.95
+    if len(sys.argv) > 1 and sys.argv[1] == "--test-alert":
+        test_label = sys.argv[2] if len(sys.argv) > 2 else "gunshot"
+        test_conf = float(sys.argv[3]) if len(sys.argv) > 3 else 0.95
+        print("=========================================================================")
+        print("   TEST MANUALE INVIO SAFETY ALERT -> MASTER SERVER -> TELEGRAM          ")
+        print(f"   Target URL: {SAFETY_ALERT_URL}                                        ")
+        print(f"   Evento: {test_label} (confidenza: {test_conf * 100:.1f}%)              ")
+        print("=========================================================================")
+        success = send_safety_alert(test_label, test_conf, sound_db=88.5)
+        sys.exit(0 if success else 1)
+
     print("=========================================================================")
     print("   ARDUINO UNO Q (4GB) - NOISE MONITOR TELEMETRY CLIENT                  ")
     print(f"   Stazione ID: {STATION_ID} ({STATION_NAME})                            ")
     print(f"   Server Target: {SERVER_URL}                                           ")
+    print(f"   Safety Alert URL: {SAFETY_ALERT_URL}                                  ")
+    print(f"   Classi di Pericolo: {', '.join(sorted(DANGER_CLASSES))}                ")
     print(f"   Dispositivo Audio: {ARECORD_DEVICE} ({AUDIONAME})                      ")
     print("=========================================================================")
 

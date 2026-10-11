@@ -345,10 +345,14 @@ export function formatSafetyAlertMessage(params: {
 
   const label =
     params.eventType === 'gunshot'
-      ? '🔫 <b>POSSIBILE SPARO</b>'
+      ? '🔫 <b>POSSIBILE SPARO RILEVATO</b>'
       : params.eventType === 'scream'
         ? '🆘 <b>POSSIBILI URLA / RICHIESTA DI AIUTO</b>'
-        : '⚠️ <b>EVENTO DI PERICOLO RILEVATO</b>';
+        : params.eventType === 'siren'
+          ? '🚨 <b>SIRENA DI EMERGENZA RILEVATA</b>'
+          : params.eventType === 'impact_crash'
+            ? '💥 <b>FORTE IMPATTO / COLLISIONE RILEVATA</b>'
+            : '⚠️ <b>EVENTO CRITICO RILEVATO</b>';
   const confidence =
     params.confidence != null ? ` — confidenza <code>${Math.round(params.confidence * 100)}%</code>` : '';
 

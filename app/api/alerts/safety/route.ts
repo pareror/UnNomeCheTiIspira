@@ -18,7 +18,7 @@ const SafetyAlertSchema = z.object({
     .min(2, 'station_id obbligatorio')
     .max(64, 'station_id troppo lungo')
     .regex(/^[a-zA-Z0-9_-]+$/, 'station_id contiene caratteri non validi'),
-  event_type: z.enum(['scream', 'gunshot', 'other']).default('other'),
+  event_type: z.enum(['scream', 'gunshot', 'siren', 'impact_crash', 'other']).default('other'),
   confidence: z.number().min(0).max(1).optional(),
   timestamp: z.number().int().positive().optional(),
   message: z.string().max(300).optional(),

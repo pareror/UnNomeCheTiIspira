@@ -121,17 +121,19 @@ Options / environment variables:
 |------|-----|---------|---------|
 | `--model-dir` | `EDGE_MODEL_DIR` | `model/` | model bundle directory |
 | `--model-file` | `EDGE_MODEL_FILE` | auto | force a specific model file |
-| `--source` | `EDGE_SOURCE` | `wav` | `wav` (replay) or `mic` (USB sound card) |
+| `--source` | `EDGE_SOURCE` | `mic` | `mic` (jack/USB mic, default) or `wav` (replay) |
 | `--wav` | `EDGE_WAV` | — | WAV path when `source=wav` |
+| — | `EDGE_DEVICE` | default input | sounddevice input device index or name |
 | — | `EDGE_HIGHPASS` | `100` | low-cut Hz before log-mel (`0` disables) |
 | — | `EDGE_SILENCE_DBFS` | `-50` | below this level report `silence` and never alert |
 | — | `EDGE_BG_MARGIN` | `8` | mic: dB above the noise floor to accept a window (`0` disables) |
 | — | `EDGE_MIN_CONFIDENCE` | `0.6` | below this the class is reported as `uncertain` |
 | — | `EDGE_USE_BRIDGE` | `1` | set `0` to skip Bridge/LED calls |
 
-For a live microphone, use `--source mic` (requires a USB mic or sound card and
-`sounddevice`). The UNO Q has no onboard mic; an I2S MEMS mic wired to the
-STM32 side would instead be streamed over the Bridge.
+Audio input defaults to `mic` (the 3.5 mm jack / USB sound card exposed to ALSA,
+captured through `sounddevice`). List the inputs with `python/live_monitor.py
+--list-devices` and select one with `--device`/`EDGE_DEVICE` if the default is not
+the mic. Use `--source wav --wav <clip>` to replay a file instead.
 
 ### Live monitor (real time)
 

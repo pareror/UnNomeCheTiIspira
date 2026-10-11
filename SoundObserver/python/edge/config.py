@@ -31,7 +31,7 @@ class RuntimeConfig:
 
     model_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parents[2] / "model")
     model_file: str | None = None  # auto-detected (model_int8.onnx | model.onnx | model.tflite)
-    source: str = "wav"  # "wav" | "mic"
+    source: str = "mic"  # "mic" (default, App Lab / desktop) | "wav"
     wav_path: str | None = None
     device: int | str | None = None  # sounddevice device for "mic"
     sample_rate: int = 16000
@@ -82,6 +82,9 @@ def load_config(**overrides) -> RuntimeConfig:
         cfg.source = os.environ["EDGE_SOURCE"]
     if os.environ.get("EDGE_WAV"):
         cfg.wav_path = os.environ["EDGE_WAV"]
+    if os.environ.get("EDGE_DEVICE"):
+        dev = os.environ["EDGE_DEVICE"].strip()
+        cfg.device = int(dev) if dev.isdigit() else dev
     if os.environ.get("EDGE_USE_BRIDGE"):
         cfg.use_bridge = os.environ["EDGE_USE_BRIDGE"].strip().lower() not in ("0", "false", "no")
     if os.environ.get("EDGE_HIGHPASS"):

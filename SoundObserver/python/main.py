@@ -194,7 +194,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", default=None)
     parser.add_argument("--model-file", default=None)
-    parser.add_argument("--source", choices=["wav", "mic"], default="wav")
+    parser.add_argument("--source", choices=["wav", "mic"], default="mic")
     parser.add_argument("--wav", default=None)
     return parser.parse_args()
 

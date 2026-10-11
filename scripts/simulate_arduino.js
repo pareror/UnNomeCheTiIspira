@@ -33,9 +33,6 @@ async function sendReading(station) {
 
   const payload = {
     station_id: station.id,
-    name: station.name,
-    latitude: station.lat,
-    longitude: station.lon,
     sound_intensity: soundIntensity, // unsigned int
     timestamp: Date.now(),
   };

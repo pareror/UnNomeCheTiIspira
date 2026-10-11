@@ -33,12 +33,7 @@ export const TelemetryReadingSchema = z.object({
       }
       return ts;
     }),
-  // Metadati opzionali per auto-registrazione della stazione
-  name: z.string().max(100).optional(),
-  latitude: z.number().min(44.5).max(45.5).optional(),
-  longitude: z.number().min(7.2).max(8.2).optional(),
-  
-  // Chiave API inclusa direttamente nel payload (comodo per schede Arduino WiFi con librerie minimali)
+  // Chiave API inclusa opzionalmente direttamente nel payload
   api_key: z.string().optional(),
 });
 

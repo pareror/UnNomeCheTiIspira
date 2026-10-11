@@ -26,7 +26,7 @@ async function parseIncomingPayload(request: NextRequest): Promise<any> {
       const formData = await request.formData();
       const obj: Record<string, any> = {};
       formData.forEach((value, key) => {
-        if (key === 'sound_intensity' || key === 'timestamp' || key === 'latitude' || key === 'longitude') {
+        if (key === 'sound_intensity' || key === 'timestamp') {
           obj[key] = Number(value);
         } else {
           obj[key] = value;
@@ -108,15 +108,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { station_id, sound_intensity, timestamp, name, latitude, longitude } = validation.data;
+  const { station_id, sound_intensity, timestamp } = validation.data;
 
-  // 5. Inserimento nel database SQLite (con auto-registrazione per nuove schede Arduino WiFi)
+  // 5. Inserimento nel database SQLite
   try {
-    const reading = insertNoiseReading(station_id, sound_intensity, timestamp, {
-      name,
-      latitude,
-      longitude,
-    });
+    const reading = insertNoiseReading(station_id, sound_intensity, timestamp);
 
     // 6. Notifica tempestiva via Telegram per gli iscritti nel raggio dell'attività
     // Soglia: sound_intensity >= 70 dB | Cooldown anti-spam: 10 minuti (600.000 ms)

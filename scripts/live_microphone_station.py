@@ -239,12 +239,9 @@ def main():
             color, label = get_color_for_db(db_value)
             vu_bar = draw_vu_meter(db_value)
 
-            # 2. Costruzione Payload JSON per il Master Next.js
+            # 2. Costruzione Payload JSON per il Master Next.js (solo dati essenziali)
             payload = {
                 "station_id": args.id,
-                "name": station_name,
-                "latitude": lat,
-                "longitude": lon,
                 "sound_intensity": db_value,  # unsigned int
                 "timestamp": timestamp_ms,
                 "api_key": args.key,

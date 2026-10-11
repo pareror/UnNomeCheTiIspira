@@ -242,12 +242,9 @@ def loop():
         # Stampa su console Arduino
         print(f"[{time.strftime('%H:%M:%S')}] Rilevati: {db_int:>3} dB ({classifica(livello)}) | picco {picco:.1f} dB [RMS {rms_db:.1f} dBFS]")
 
-        # 3. Costruzione payload per il Server Master
+        # 3. Costruzione payload per il Server Master (solo dati essenziali)
         payload = {
             "station_id": STATION_ID,
-            "name": STATION_NAME,
-            "latitude": LATITUDE,
-            "longitude": LONGITUDE,
             "sound_intensity": db_int,
             "timestamp": int(time.time() * 1000),
             "api_key": API_KEY,

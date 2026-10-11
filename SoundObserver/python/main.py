@@ -1,117 +1,195 @@
-"""App Lab entry point for the Urban Acoustic Sensor (Arduino UNO Q).
-
-Loop (once per hop, default 1 s):
-
-    16 kHz window -> log-mel (40x49) -> DS-CNN -> {urban class, safety, embedding}
-        -> unsupervised novelty baseline -> decision logic -> LED (via Bridge) + telemetry
-
-The audio is analysed locally and only compact semantics leave the node: one
-amplitude sample (NoiseSample) per second and typed EdgeEvent lines on
-transitions. Danger events (scream/gunshot) are also POSTed to the master server,
-which forwards them to Telegram; the event string is pushed to the MCU for the
-OLED. No raw audio is transmitted (see docs/system-architecture-model.md).
+#!/usr/bin/env python3
+"""
+=============================================================================
+ ARDUINO UNO Q (4GB RAM) - TELEMETRIA ACUSTICA REALE VERSO TORINO NOISE MONITOR
+=============================================================================
+Script unificato per Arduino Uno Q:
+1. Acquisisce l'audio hardware dal microfono (arecord su hw:0,2).
+2. Calcola l'energia RMS in dBFS e la converte in scala decibel (dB SPL).
+3. Trasmette i decibel in tempo reale tramite HTTP POST al Server Master Next.js.
+4. Supporta buffer circolare in RAM (Zero-Data-Loss in caso di calo Wi-Fi).
+5. Invia i dati al coprocessore STM32 su /dev/ttyS0.
+6. Compatibile sia con l'Arduino App Framework (App.run) sia con esecuzione standalone.
+=============================================================================
 """
 
-from __future__ import annotations
+# Import sicuro dell'Arduino App Framework
+try:
+    from arduino.app_utils import App
+except ImportError:
+    App = None
 
-import argparse
-import json
 import os
 import sys
 import time
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from edge.anomaly import RollingStats
-from edge.audio import BackgroundGate, make_source, rms_dbfs
-from edge.config import SAFETY_CLASSES, RuntimeConfig, load_config
-from edge.decision import LED_OFF, LED_RED, DecisionLogic
-from edge.engine import ModelRunner
-from edge.features import LogMel
-from edge.preprocess import Preprocessor
-from edge.report import ServerReporter
-
-try:  # Present only inside App Lab; absent when running on a desktop for tests.
-    from arduino.app_utils import App, Bridge
-except Exception:  # noqa: BLE001 - the app must still run off-board
-    App = None
-    Bridge = None
+import math
+import array
+import wave
+import subprocess
+import traceback
+import collections
+import threading
+from typing import Optional
+from arduino_bridge import ArduinoBridge
+from edge.classifier import classify_file
+#from arduino.router_bridge import Bridge
 
 
-class Runtime:
-    def __init__(self, cfg: RuntimeConfig) -> None:
-        self.cfg = cfg
-        model_path = cfg.resolve_model()
-        self.runner = ModelRunner.from_dir(model_path)
-        self.meta = self.runner.meta
-        cfg.win_seconds = self.meta.win_seconds  # honor the model's window length (1 s / 5 s)
-        self.logmel = LogMel(
-            sample_rate=cfg.sample_rate,
-            n_mels=self.meta.n_mels,
-            target_frames=self.meta.frames,
-        )
-        self.preprocess = Preprocessor(cfg.sample_rate, cfg.highpass_hz, cfg.peak_normalize)
-        self.baseline = RollingStats(n_features=self.meta.embedding_dim)
-        self.decision = DecisionLogic(cfg.decision)
-        self.source = make_source(cfg)
-        self.gate = (
-            BackgroundGate(cfg.silence_dbfs, cfg.background_margin_db)
-            if cfg.source == "mic" and cfg.background_margin_db > 0
-            else None
-        )
-        self.reporter = ServerReporter(cfg) if cfg.report_safety else None
-        self._last_led = None
-        self._last_display = None
-        self._prev_flags = {"alarm": False, "safety": False}
-        print(
-            f"[edge] model={model_path.name} classes={self.meta.n_urban} "
-            f"frames={self.meta.frames} win={self.meta.win_seconds}s "
-            f"highpass={cfg.highpass_hz:.0f}Hz source={cfg.source} "
-            f"bridge={'on' if _bridge_ok(cfg) else 'off'} "
-            f"report={'on' if self.reporter is not None else 'off'}"
-        )
 
-    # -- helpers ---------------------------------------------------------------
-    def _set_led(self, state: int) -> None:
-        if state == self._last_led:
-            return
-        self._last_led = state
-        if _bridge_ok(self.cfg) and Bridge is not None:
-            try:
-                Bridge.call("set_led", int(state))
-            except Exception as exc:  # noqa: BLE001
-                print(f"[edge] bridge set_led failed: {exc}")
 
-    def _show(self, text: str) -> None:
-        """Push a string to the MCU to render on the OLED (only when it changes)."""
-        if text == self._last_display:
-            return
-        self._last_display = text
-        if _bridge_ok(self.cfg) and Bridge is not None:
-            try:
-                Bridge.call("show_event", text)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[edge] bridge show_event failed: {exc}")
 
-    def _event(self, kind: str, payload: dict) -> None:
-        line = {"ts": time.time(), "type": kind, **payload, "model_version": self.meta.version}
-        print("[event] " + json.dumps(line))
+print("-> PYTHON IN USO DALLO SCRIPT:", sys.executable)
+print("-> PATH CERCATI:", sys.path)
 
-    def _raise_safety(self, result) -> None:  # noqa: ANN001
-        """Danger detected: log it, notify the server (-> Telegram) and the OLED."""
-        cls = self.meta.class_names[result.urban_index]
-        self._event("EdgeEvent.safety", {"class": cls, "confidence": result.safety_prob})
-        event_type = cls if cls in SAFETY_CLASSES else "other"
-        if self.reporter is not None:
-            self.reporter.send_safety(event_type, result.safety_prob)
-        self._show(f"{cls.upper()} {result.safety_prob:.0%}")
+# Dipendenza HTTP requests
+try:
+    import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+except ImportError:
+    print("[ERRORE] Libreria 'requests' mancante. Installa con: pip3 install requests")
+    sys.exit(1)
 
-    def close(self) -> None:
-        if self.reporter is not None:
-            self.reporter.close()
 
-    # -- one hop ---------------------------------------------------------------
-    def step(self) -> None:
+### PROVA a crare eusare un bridge per controllare il led
+
+bridge = ArduinoBridge()
+#bridge = Bridge()
+
+#state = 1
+
+
+# =============================================================================
+# 1. CONFIGURAZIONE MASTER SERVER NEXT.JS & PARAMETRI STAZIONE
+# =============================================================================
+# IP del PC sulla rete Wi-Fi locale
+SERVER_URL = os.getenv("SERVER_URL", "http://192.168.22.103:3000/api/telemetry/reading")
+API_KEY = os.getenv("SENSOR_API_KEY", "arduino-torino-noise-secret-2026")
+STATION_ID = "ard-uno-q-real"
+STATION_NAME = "Arduino Uno Q (Stazione Hardware)"
+LATITUDE = 45.0566
+LONGITUDE = 7.6812
+
+# =============================================================================
+# 2. CONFIGURAZIONE AUDIO HARDWARE (ARECORD)
+# =============================================================================
+AUDIONAME = "test_audio.wav"
+ARECORD_DEVICE = "hw:0,2"
+RECORD_DURATION_SEC = "3"  # Durata campionamento in secondi per ogni misurazione
+
+ARECORD_CMD = [
+    "arecord", "-D", ARECORD_DEVICE,
+    "-f", "S16_LE", "-c", "1", "-r", "16000",
+    "-d", RECORD_DURATION_SEC, AUDIONAME,
+]
+
+CHUNK_FRAMES = 4096
+
+# Calibrazione: dB_scala = dBFS + OFFSET.
+# Con 100: -60 dBFS -> 40 dB, -20 dBFS -> 80 dB, -5 dBFS -> 95 dB.
+CALIBRATION_OFFSET_DB = 100.0
+
+# Seriale per comunicazione con STM32
+SERIAL_PORT = "/dev/ttyS0"
+SERIAL_BAUD = 115200
+
+# Parametri buffer RAM per resilienza di rete
+MAX_RAM_BUFFER_SIZE = 3600
+ram_telemetry_queue = collections.deque(maxlen=MAX_RAM_BUFFER_SIZE)
+queue_lock = threading.Lock()
+running = True
+
+# Sessione HTTP Keep-Alive
+http_session: Optional[requests.Session] = None
+
+
+# =============================================================================
+# 3. FUNZIONI DI CALCOLO E ANALISI ACUSTICA
+# =============================================================================
+def dbfs_to_scala(dbfs: float) -> float:
+    """Converte dBFS nella scala decibel calibrata (mai sotto 0, -inf diventa 0)."""
+    if math.isinf(dbfs):
+        return 0.0
+    return max(0.0, dbfs + CALIBRATION_OFFSET_DB)
+
+
+def classifica(db: float) -> str:
+    """Ritorna l'etichetta del livello di rumore per terminale."""
+    if db < 40:
+        return "SILENZIO"
+    if db < 60:
+        return "AMBIENTE"
+    if db < 66:
+        return "RUMORE LIEVE (verde)"
+    if db < 81:
+        return "RUMORE MEDIO (giallo)"
+    if db <= 95:
+        return "RUMORE FORTE (rosso)"
+    return "RUMORE INTENSO (viola)"
+
+
+def get_wav_db(path: str):
+    """Analizza il file WAV a 16 bit e calcola (rms_dbfs, peak_dbfs)."""
+    with wave.open(path, "rb") as w:
+        if w.getsampwidth() != 2:
+            raise ValueError("Supportato solo PCM a 16 bit (S16_LE)")
+
+        somma_quadrati = 0.0
+        picco = 0
+        totale = 0
+
+        while True:
+            raw = w.readframes(CHUNK_FRAMES)
+            if not raw:
+                break
+            campioni = array.array("h")
+            campioni.frombytes(raw)
+            if sys.byteorder == "big":
+                campioni.byteswap()
+            for s in campioni:
+                somma_quadrati += s * s
+                a = -s if s < 0 else s
+                if a > picco:
+                    picco = a
+            totale += len(campioni)
+
+    if totale == 0:
+        raise ValueError("Nessun campione nel file audio registrato")
+
+    full_scale = 32768.0
+    rms = math.sqrt(somma_quadrati / totale)
+
+    def to_db(x):
+        return 20.0 * math.log10(x / full_scale) if x > 0 else float("-inf")
+
+    return to_db(rms), to_db(picco)
+
+
+# =============================================================================
+# 4. GESTIONE TRASMISSIONE WI-FI HTTP VERSO IL SERVER MASTER
+# =============================================================================
+def init_optimized_http_session() -> requests.Session:
+    """Inizializza una sessione HTTP Keep-Alive con retry automatici."""
+    session = requests.Session()
+    retries = Retry(total=2, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
+    adapter = HTTPAdapter(pool_connections=10, pool_maxsize=20, max_retries=retries, pool_block=False)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    session.headers.update({
+        'Content-Type': 'application/json',
+        'x-api-key': API_KEY,
+        'Connection': 'keep-alive',
+        'User-Agent': 'Arduino-Uno-Q-Hardware/1.0',
+    })
+    return session
+
+
+def transmit_packet(payload: dict) -> bool:
+    """Invia un pacchetto acustico via POST verso /api/telemetry/reading."""
+    global http_session
+    if http_session is None:
+        http_session = init_optimized_http_session()
+    try:
         t0 = time.time()
         res = http_session.post(SERVER_URL, json=payload, timeout=1.0)
         lat_ms = (time.time() - t0) * 1000
@@ -151,6 +229,9 @@ def transmission_worker():
 # =============================================================================
 def loop():
 
+    #import os
+    print("Cartella di lavoro (getcwd):", os.getcwd())
+    print("Posizione del file (__file__):", __file__)
     #global state
     """Funzione di loop chiamata continuamente dall'Arduino App Framework o dal main."""
     try:
@@ -179,57 +260,55 @@ def loop():
             "timestamp": int(time.time() * 1000),
             "api_key": API_KEY,
         }
-        print("[telemetry] " + json.dumps(line))
+
+        # 4. Accodamento in RAM (trasmissione asincrona e robusta)
+        with queue_lock:
+            ram_telemetry_queue.append(payload)
+
+         #4.5 Notifica l'stm32 sullo stato della ricerca
+        label, confidence = classify_file("test_audio.wav")
+        print(f"Classe: {label}, Confidenza: {confidence:.2f}")
+        
+        # 5. Notifica locale all'STM32 via Seriale (se collegato)
+   
+        
+        if (bridge.connect()):  # Waits until connected; True if connected, False on timeout
+            #state = not state
+            bridge.notify("get_label",label)
+            bridge.notify("set_led_level",db_int)
+            bridge.disconnect()
+            print(f"State {livello} has been sent to mcu")
+
+    except Exception:
+        traceback.print_exc()
+
+    time.sleep(0.5)
 
 
-def _bridge_ok(cfg: RuntimeConfig) -> bool:
-    return cfg.use_bridge and Bridge is not None
+# =============================================================================
+# 6. AVVIO APPLICAZIONE (APP.RUN O STANDALONE)
+# =============================================================================
+if __name__ == '__main__':
+    print("=========================================================================")
+    print("   ARDUINO UNO Q (4GB) - NOISE MONITOR TELEMETRY CLIENT                  ")
+    print(f"   Stazione ID: {STATION_ID} ({STATION_NAME})                            ")
+    print(f"   Server Target: {SERVER_URL}                                           ")
+    print(f"   Dispositivo Audio: {ARECORD_DEVICE} ({AUDIONAME})                      ")
+    print("=========================================================================")
 
+    # Avvio thread di trasmissione asincrona in background
+    t_trans = threading.Thread(target=transmission_worker, daemon=True)
+    t_trans.start()
 
-_RUNTIME: Runtime | None = None
-
-
-def _runtime() -> Runtime:
-    global _RUNTIME
-    if _RUNTIME is None:
-        _RUNTIME = Runtime(load_config())
-    return _RUNTIME
-
-
-def loop() -> None:
-    """User loop handed to App.run (called repeatedly by App Lab)."""
-    _runtime().step()
-
-
-def standalone(args: argparse.Namespace) -> None:
-    cfg = load_config(
-        model_dir=args.model_dir,
-        model_file=args.model_file,
-        source=args.source,
-        wav_path=args.wav,
-        use_bridge=False,
-    )
-    runtime = Runtime(cfg)
-    print("[edge] running standalone (Ctrl-C to stop)")
-    try:
-        while True:
-            runtime.step()
-    except KeyboardInterrupt:
-        print("\n[edge] stopped")
-    finally:
-        runtime.close()
-
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-dir", default=None)
-    parser.add_argument("--model-file", default=None)
-    parser.add_argument("--source", choices=["wav", "mic"], default="mic")
-    parser.add_argument("--wav", default=None)
-    return parser.parse_args()
-
-
-if App is not None:  # inside App Lab
-    App.run(user_loop=loop)
-elif __name__ == "__main__":  # desktop / manual run
-    standalone(_parse_args())
+    # Se l'App Framework Arduino è presente esegue App.run(user_loop=loop), altrimenti loop standard
+    if App is not None and hasattr(App, 'run'):
+        print("[*] Avvio tramite Arduino App Framework...")
+        App.run(user_loop=loop)
+    else:
+        print("[*] Avvio in modalità standalone Python...")
+        try:
+            while True:
+                loop()
+        except KeyboardInterrupt:
+            print("\nArresto client Arduino...")
+            running = False

@@ -559,6 +559,32 @@ export function createStation(input: {
   return db.prepare('SELECT * FROM stations WHERE id = ?').get(cleanId) as Station;
 }
 
+export function upsertStation(input: {
+  id: string;
+  name?: string;
+  latitude?: number;
+  longitude?: number;
+  is_dummy?: boolean;
+}): Station {
+  const db = getDb();
+  const cleanId = input.id.trim();
+  const existing = db.prepare('SELECT * FROM stations WHERE id = ?').get(cleanId) as Station | undefined;
+  if (existing) {
+    return existing;
+  }
+  const name = input.name?.trim() || `Stazione (${cleanId})`;
+  const lat = input.latitude ?? 45.0705;
+  const lon = input.longitude ?? 7.6868;
+  const isDummyVal = input.is_dummy ? 1 : 0;
+
+  db.prepare(`
+    INSERT INTO stations (id, name, latitude, longitude, is_dummy, created_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+  `).run(cleanId, name, lat, lon, isDummyVal);
+
+  return db.prepare('SELECT * FROM stations WHERE id = ?').get(cleanId) as Station;
+}
+
 export function updateStation(
   id: string,
   updates: {

@@ -1,4 +1,4 @@
-# 🏙️ NoiStop / Torino Noise Monitor
+# 🏙️ NoisTOp / Torino Noise Monitor
 
 <div align="center">
 
